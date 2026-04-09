@@ -52,21 +52,19 @@ export async function syncSchema() {
         user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
         type VARCHAR(50) DEFAULT 'expense',
         amount NUMERIC NOT NULL,
-        is_expense BOOLEAN NOT NULL DEFAULT true,
         category_id VARCHAR(255) REFERENCES categories(id) ON DELETE SET NULL,
         account_id VARCHAR(255) REFERENCES accounts(id) ON DELETE CASCADE,
-        to_account_id VARCHAR(255) REFERENCES accounts(id) ON DELETE SET NULL,
-        description TEXT,
+        to_account_id VARCHAR(255),
         note TEXT,
         date TIMESTAMP NOT NULL,
-        is_recurring BOOLEAN DEFAULT false,
-        recurring_frequency VARCHAR(50),
+        repeat_group_id VARCHAR(255),
+        repeat_end_date VARCHAR(50),
         photo TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
-    // Add missing columns if table already exists (safe ALTER statements)
+    // Safely add columns that may not exist yet
     await client.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS type VARCHAR(50) DEFAULT 'expense'`);
     await client.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS note TEXT`);
     await client.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS to_account_id VARCHAR(255)`);
