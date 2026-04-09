@@ -54,7 +54,8 @@ function hashDevice(userAgent) {
 // POST /api/auth/signup — Step 1: Send OTP
 router.post('/signup', async (req, res) => {
     try {
-        const { name, email, password } = req.body;
+        const { name, password } = req.body;
+        const email = req.body.email?.toLowerCase();
 
         if (!name || !email || !password) {
             return res.status(400).json({ error: 'Name, email, and password are required' });
@@ -102,7 +103,8 @@ router.post('/signup', async (req, res) => {
 // POST /api/auth/verify-otp — Step 2: Verify and create account
 router.post('/verify-otp', async (req, res) => {
     try {
-        const { email, code, type } = req.body;
+        const { code, type } = req.body;
+        const email = req.body.email?.toLowerCase();
 
         if (!email || !code) {
             return res.status(400).json({ error: 'Email and verification code are required' });
@@ -163,7 +165,8 @@ router.post('/verify-otp', async (req, res) => {
 // POST /api/auth/resend-otp
 router.post('/resend-otp', async (req, res) => {
     try {
-        const { email, type } = req.body;
+        const { type } = req.body;
+        const email = req.body.email?.toLowerCase();
 
         if (!email) {
             return res.status(400).json({ error: 'Email is required' });
@@ -205,7 +208,8 @@ router.post('/resend-otp', async (req, res) => {
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const { password } = req.body;
+        const email = req.body.email?.toLowerCase();
 
         if (!email || !password) {
             return res.status(400).json({ error: 'Email and password are required' });
@@ -285,7 +289,8 @@ router.post('/login', async (req, res) => {
 // POST /api/auth/verify-login-otp — Complete login after OTP
 router.post('/verify-login-otp', async (req, res) => {
     try {
-        const { email, code } = req.body;
+        const { code } = req.body;
+        const email = req.body.email?.toLowerCase();
         if (!email || !code) {
             return res.status(400).json({ error: 'Email and verification code are required' });
         }
@@ -348,7 +353,7 @@ router.post('/verify-login-otp', async (req, res) => {
 // POST /api/auth/forgot-password
 router.post('/forgot-password', async (req, res) => {
     try {
-        const { email } = req.body;
+        const email = req.body.email?.toLowerCase();
 
         if (!email) {
             return res.status(400).json({ error: 'Email is required' });
@@ -383,7 +388,8 @@ router.post('/forgot-password', async (req, res) => {
 // POST /api/auth/reset-password
 router.post('/reset-password', async (req, res) => {
     try {
-        const { email, code, newPassword } = req.body;
+        const { code, newPassword } = req.body;
+        const email = req.body.email?.toLowerCase();
 
         if (!email || !code || !newPassword) {
             return res.status(400).json({ error: 'Email, code, and new password are required' });
