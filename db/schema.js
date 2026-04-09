@@ -133,6 +133,35 @@ export async function syncSchema() {
       )
     `);
 
+    // OTP Codes
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS otp_codes (
+        id VARCHAR(255) PRIMARY KEY,
+        email VARCHAR(255) NOT NULL,
+        code VARCHAR(50) NOT NULL,
+        type VARCHAR(50) NOT NULL,
+        name VARCHAR(255),
+        password VARCHAR(255),
+        expires_at TIMESTAMP NOT NULL,
+        used BOOLEAN DEFAULT false,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Login Devices
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS login_devices (
+        id VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
+        device_hash VARCHAR(255) NOT NULL,
+        device_info TEXT NOT NULL,
+        ip_address VARCHAR(255),
+        first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, device_hash)
+      )
+    `);
+
     await client.query('COMMIT');
     console.log("✅ Database schema synchronized successfully.");
   } catch (error) {
