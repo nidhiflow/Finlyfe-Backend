@@ -10,6 +10,7 @@ import savingsGoalsRoutes from "./routes/savings-goals.js";
 import statsRoutes from "./routes/stats.js";
 import settingsRoutes from "./routes/settings.js";
 import budgetsRoutes from "./routes/budgets.js";
+import aiRoutes from "./routes/ai.js";
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -31,9 +32,9 @@ app.use("/api/savings-goals", savingsGoalsRoutes);
 app.use("/api/stats", statsRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/budgets", budgetsRoutes);
+app.use("/api/ai", aiRoutes);
 
-// Mocks for AI and Bookmarks to prevent fetch errors
-app.post("/api/ai/chat", (req, res) => res.json({ response: "AI features actived later." }));
+// Mocks for Bookmarks to prevent fetch errors
 app.get("/api/bookmarks", (req, res) => res.json([]));
 app.post("/api/bookmarks", (req, res) => res.json({ message: "Bookmark saved" }));
 app.delete("/api/bookmarks/:id", (req, res) => res.json({ message: "Bookmark removed" }));

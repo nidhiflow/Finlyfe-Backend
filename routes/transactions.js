@@ -1,5 +1,6 @@
 import express from 'express';
 import { query } from '../db/index.js';
+import { uploadImage, deleteImage } from '../services/cloudinary.js';
 
 const router = express.Router();
 
@@ -47,13 +48,16 @@ router.get('/:id', async (req, res) => {
 
 // Create transaction
 router.post('/', async (req, res) => {
-  const { amount, is_expense, category_id, account_id, description, date, is_recurring, recurring_frequency } = req.body;
+  const { amount, is_expense, category_id, account_id, description, date, is_recurring, recurring_frequency, photo } = req.body;
   const id = Date.now().toString(); // simple ID generator
   try {
+    let photoUrl = null;
+    if (photo) photoUrl = await uploadImage(photo);
+
     const result = await query(
-      `INSERT INTO transactions (id, user_id, amount, is_expense, category_id, account_id, description, date, is_recurring, recurring_frequency)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-      [id, req.user.id, amount, is_expense, category_id, account_id, description, date, is_recurring, recurring_frequency]
+      `INSERT INTO transactions (id, user_id, amount, is_expense, category_id, account_id, description, date, is_recurring, recurring_frequency, photo)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+      [id, req.user.id, amount, is_expense, category_id, account_id, description, date, is_recurring, recurring_frequency, photoUrl]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -64,15 +68,23 @@ router.post('/', async (req, res) => {
 // Update transaction
 router.put('/:id', async (req, res) => {
   const { id } = req.params;
-  const { amount, is_expense, category_id, account_id, description, date } = req.body;
+  const { amount, is_expense, category_id, account_id, description, date, photo } = req.body;
   try {
+    const { rows: existingRows } = await query('SELECT * FROM transactions WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    if (existingRows.length === 0) return res.status(404).json({ error: "Transaction not found" });
+    
+    let photoUrl = photo !== undefined ? photo : existingRows[0].photo;
+    if (photo && !photo.startsWith('http')) {
+       photoUrl = await uploadImage(photo);
+       if (existingRows[0].photo) await deleteImage(existingRows[0].photo);
+    }
+
     const result = await query(
       `UPDATE transactions 
-       SET amount = $1, is_expense = $2, category_id = $3, account_id = $4, description = $5, date = $6
-       WHERE id = $7 AND user_id = $8 RETURNING *`,
-      [amount, is_expense, category_id, account_id, description, date, id, req.user.id]
+       SET amount = $1, is_expense = $2, category_id = $3, account_id = $4, description = $5, date = $6, photo = $7
+       WHERE id = $8 AND user_id = $9 RETURNING *`,
+      [amount, is_expense, category_id, account_id, description, date, photoUrl, id, req.user.id]
     );
-    if (result.rows.length === 0) return res.status(404).json({ error: "Transaction not found" });
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -83,8 +95,13 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    const result = await query('DELETE FROM transactions WHERE id = $1 AND user_id = $2 RETURNING *', [id, req.user.id]);
-    if (result.rows.length === 0) return res.status(404).json({ error: "Transaction not found" });
+    const { rows: existingRows } = await query('SELECT * FROM transactions WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    if (existingRows.length === 0) return res.status(404).json({ error: "Transaction not found" });
+
+    await query('DELETE FROM transactions WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    
+    if (existingRows[0].photo) await deleteImage(existingRows[0].photo);
+    
     res.json({ message: "Success" });
   } catch (err) {
     res.status(500).json({ error: err.message });

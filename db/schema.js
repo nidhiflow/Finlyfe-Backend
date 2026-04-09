@@ -58,6 +58,7 @@ export async function syncSchema() {
         date TIMESTAMP NOT NULL,
         is_recurring BOOLEAN DEFAULT false,
         recurring_frequency VARCHAR(50),
+        photo TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -97,6 +98,17 @@ export async function syncSchema() {
         month VARCHAR(7) NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(user_id, category_id, month)
+      )
+    `);
+
+    // AI Chat Messages
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ai_chat_messages (
+        id VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
+        role VARCHAR(50) NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
