@@ -3,7 +3,13 @@ import express from "express";
 import cors from "cors";
 import { syncSchema } from "./db/schema.js";
 import authRoutes from "./routes/auth.js";
-// import transactionRoutes from "./routes/transactions.js";
+import transactionRoutes from "./routes/transactions.js";
+import accountRoutes from "./routes/accounts.js";
+import categoryRoutes from "./routes/categories.js";
+import savingsGoalsRoutes from "./routes/savings-goals.js";
+import statsRoutes from "./routes/stats.js";
+import settingsRoutes from "./routes/settings.js";
+import budgetsRoutes from "./routes/budgets.js";
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -18,7 +24,19 @@ app.get("/api/health", (req, res) => {
 
 // Mount Routes
 app.use("/api/auth", authRoutes);
-// app.use("/api/transactions", transactionRoutes);
+app.use("/api/transactions", transactionRoutes);
+app.use("/api/accounts", accountRoutes);
+app.use("/api/categories", categoryRoutes);
+app.use("/api/savings-goals", savingsGoalsRoutes);
+app.use("/api/stats", statsRoutes);
+app.use("/api/settings", settingsRoutes);
+app.use("/api/budgets", budgetsRoutes);
+
+// Mocks for AI and Bookmarks to prevent fetch errors
+app.post("/api/ai/chat", (req, res) => res.json({ response: "AI features actived later." }));
+app.get("/api/bookmarks", (req, res) => res.json([]));
+app.post("/api/bookmarks", (req, res) => res.json({ message: "Bookmark saved" }));
+app.delete("/api/bookmarks/:id", (req, res) => res.json({ message: "Bookmark removed" }));
 
 // Start Server
 async function startServer() {

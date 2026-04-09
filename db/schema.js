@@ -62,6 +62,21 @@ export async function syncSchema() {
       )
     `);
 
+    // Savings Goals
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS savings_goals (
+        id VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        target_amount NUMERIC NOT NULL,
+        current_amount NUMERIC DEFAULT 0,
+        deadline TIMESTAMP,
+        icon VARCHAR(50),
+        color VARCHAR(50),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     // Settings
     await client.query(`
       CREATE TABLE IF NOT EXISTS settings (
@@ -69,6 +84,19 @@ export async function syncSchema() {
         key VARCHAR(100) NOT NULL,
         value TEXT,
         PRIMARY KEY (user_id, key)
+      )
+    `);
+
+    // Budgets
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS budgets (
+        id VARCHAR(255) PRIMARY KEY,
+        user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
+        category_id VARCHAR(255) REFERENCES categories(id) ON DELETE CASCADE,
+        amount NUMERIC NOT NULL,
+        month VARCHAR(7) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, category_id, month)
       )
     `);
 
