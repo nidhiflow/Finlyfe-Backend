@@ -77,7 +77,7 @@ export async function syncSchema() {
       const { rows: fks } = await client.query(`
         SELECT constraint_name FROM information_schema.table_constraints
         WHERE table_name = 'transactions' AND constraint_type = 'FOREIGN KEY'
-        AND (constraint_name LIKE '%account_id%' OR constraint_name LIKE '%category_id%')
+        AND (constraint_name LIKE '%account_id%' OR constraint_name LIKE '%category_id%' OR constraint_name LIKE '%to_account_id%')
       `);
       for (const fk of fks) {
         await client.query(`ALTER TABLE transactions DROP CONSTRAINT IF EXISTS "${fk.constraint_name}"`);
