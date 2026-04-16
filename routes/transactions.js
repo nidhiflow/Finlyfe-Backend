@@ -16,7 +16,7 @@ router.get('/', async (req, res) => {
     let idx = 2;
 
     if (month) {
-      sql += ` AND to_char(date, 'YYYY-MM') = $${idx++}`;
+      sql += ` AND LEFT(date, 7) = $${idx++}`;
       params.push(month);
     }
     if (startDate) {

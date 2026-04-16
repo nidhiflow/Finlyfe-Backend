@@ -16,7 +16,7 @@ router.get('/summary', async (req, res) => {
       sql = `SELECT 
         COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) as total_income,
         COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) as total_expense
-       FROM transactions WHERE user_id = $1 AND to_char(date::date, 'YYYY-MM') = $2`;
+       FROM transactions WHERE user_id = $1 AND LEFT(date, 7) = $2`;
       params = [req.userId, month];
     } else {
       sql = `SELECT 
@@ -53,7 +53,7 @@ router.get('/finly-score', async (req, res) => {
       sql = `SELECT 
         COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) as income,
         COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) as expense
-       FROM transactions WHERE user_id = $1 AND to_char(date::date, 'YYYY-MM') = $2`;
+       FROM transactions WHERE user_id = $1 AND LEFT(date, 7) = $2`;
       params = [req.userId, month];
     } else {
       sql = `SELECT 
@@ -91,19 +91,19 @@ router.get('/finly-score', async (req, res) => {
 router.get('/category-breakdown', async (req, res) => {
   const { month } = req.query;
   try {
-    let sql = `SELECT c.name as category, c.color, SUM(t.amount) as total
+    let sql = `SELECT c.id as category_id, c.name as category_name, c.icon, c.color, t.type, SUM(t.amount) as total
        FROM transactions t
        JOIN categories c ON t.category_id = c.id
-       WHERE t.user_id = $1 AND t.type = 'expense'`;
+       WHERE t.user_id = $1`;
     const params = [req.userId];
     let idx = 2;
 
     if (month) {
-      sql += ` AND to_char(t.date::date, 'YYYY-MM') = $${idx++}`;
+      sql += ` AND LEFT(t.date, 7) = $${idx++}`;
       params.push(month);
     }
 
-    sql += ` GROUP BY c.name, c.color ORDER BY total DESC`;
+    sql += ` GROUP BY c.id, c.name, c.icon, c.color, t.type ORDER BY total DESC`;
 
     const result = await query(sql, params);
     res.json(result.rows);
@@ -124,7 +124,7 @@ router.get('/daily-expenses', async (req, res) => {
     let idx = 2;
 
     if (month) {
-      sql += ` AND to_char(date::date, 'YYYY-MM') = $${idx++}`;
+      sql += ` AND LEFT(date, 7) = $${idx++}`;
       params.push(month);
     }
 

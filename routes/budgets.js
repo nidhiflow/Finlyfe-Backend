@@ -20,7 +20,7 @@ router.get('/', async (req, res) => {
                WHERE t.category_id = b.category_id
                  AND t.user_id = b.user_id
                  AND t.type = 'expense'
-                 ${month ? `AND to_char(t.date::date, 'YYYY-MM') = $2` : ''}
+                 ${month ? `AND LEFT(t.date, 7) = $2` : ''}
              ), 0) as spent
       FROM budgets b
       LEFT JOIN categories c ON b.category_id = c.id
