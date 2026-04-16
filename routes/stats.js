@@ -28,11 +28,14 @@ router.get('/summary', async (req, res) => {
 
     const result = await query(sql, params);
     const summary = result.rows[0];
-    const total_balance = parseFloat(summary.total_income) - parseFloat(summary.total_expense);
+    const income = parseFloat(summary.total_income);
+    const expense = parseFloat(summary.total_expense);
+    const balance = income - expense;
     res.json({
-      totalBalance: total_balance,
-      monthlyIncome: parseFloat(summary.total_income),
-      monthlyExpenses: parseFloat(summary.total_expense)
+      income,
+      expense,
+      balance,
+      savings: Math.max(0, balance)
     });
   } catch (err) {
     console.error('Stats summary error:', err);

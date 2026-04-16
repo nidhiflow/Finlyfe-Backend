@@ -6,19 +6,36 @@ const router = express.Router();
 
 router.use(authenticateToken);
 
-// Get budgets
+// Get budgets with category info and spent amounts
 router.get('/', async (req, res) => {
   const { month } = req.query; // format: 'YYYY-MM'
   try {
-    let sql = 'SELECT * FROM budgets WHERE user_id = $1';
-    let params = [req.userId];
+    // Get budgets with category details and calculated spend
+    let sql = `
+      SELECT b.id, b.category_id, b.amount, b.period,
+             c.name as category_name, c.icon, c.color,
+             COALESCE((
+               SELECT SUM(t.amount)
+               FROM transactions t
+               WHERE t.category_id = b.category_id
+                 AND t.user_id = b.user_id
+                 AND t.type = 'expense'
+                 ${month ? `AND to_char(t.date::date, 'YYYY-MM') = $2` : ''}
+             ), 0) as spent
+      FROM budgets b
+      LEFT JOIN categories c ON b.category_id = c.id
+      WHERE b.user_id = $1`;
+    const params = [req.userId];
     if (month) {
-      sql += ' AND period = $2';
+      sql += ` AND b.period = $2`;
       params.push(month);
     }
+    sql += ` ORDER BY c.name ASC`;
+
     const result = await query(sql, params);
-    res.json(result.rows);
+    res.json({ categories: result.rows });
   } catch (err) {
+    console.error('Get budgets error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -34,11 +51,12 @@ router.post('/', async (req, res) => {
       await query(`
         INSERT INTO budgets (id, user_id, category_id, amount, period)
         VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (user_id, category_id, period) DO UPDATE SET amount = EXCLUDED.amount
+        ON CONFLICT (id) DO UPDATE SET amount = EXCLUDED.amount
       `, [id, req.userId, category_id, amount, month]);
     }
     res.json({ message: 'Budgets updated successfully' });
   } catch (err) {
+    console.error('Save budgets error:', err);
     res.status(500).json({ error: err.message });
   }
 });
