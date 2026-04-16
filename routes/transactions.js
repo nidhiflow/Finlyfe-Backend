@@ -1,32 +1,11 @@
 import express from 'express';
 import { query } from '../db/index.js';
 import { uploadImage, deleteImage } from '../services/cloudinary.js';
-import jwt from 'jsonwebtoken';
+import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret';
 
-// Auth middleware that extracts user from JWT token
-const authMiddleware = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) {
-    req.user = { id: '1' };
-    req.userId = '1';
-    return next();
-  }
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
-    req.userId = decoded.id;
-    next();
-  } catch (err) {
-    req.user = { id: '1' };
-    req.userId = '1';
-    next();
-  }
-};
-
-router.use(authMiddleware);
+router.use(authenticateToken);
 
 // Get all transactions
 router.get('/', async (req, res) => {
@@ -57,7 +36,7 @@ router.get('/', async (req, res) => {
       params.push(type);
     }
     if (search) {
-      sql += ` AND (note ILIKE $${idx} OR description ILIKE $${idx})`;
+      sql += ` AND note ILIKE $${idx}`;
       params.push(`%${search}%`);
       idx++;
     }

@@ -1,14 +1,10 @@
 import express from 'express';
 import { query } from '../db/index.js';
+import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
-const mockUserMiddleware = (req, res, next) => {
-  req.user = req.user || { id: '1' };
-  next();
-};
-
-router.use(mockUserMiddleware);
+router.use(authenticateToken);
 
 // Get all accounts
 router.get('/', async (req, res) => {

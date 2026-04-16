@@ -1,27 +1,8 @@
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db/index.js';
-import jwt from 'jsonwebtoken';
+import { authenticateToken } from '../middleware/auth.js';
 const pool = { query };
-
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret';
-const authenticateToken = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) {
-    req.user = { id: '1', email: 'demo@finly.app' };
-    req.userId = '1';
-    return next();
-  }
-  try {
-    req.user = jwt.verify(token, JWT_SECRET);
-    req.userId = req.user.id;
-    next();
-  } catch(err) {
-    req.user = { id: '1', email: 'demo@finly.app' };
-    req.userId = '1';
-    next();
-  }
-};
 
 const router = express.Router();
 const CHAT_RETENTION_DAYS = 7;

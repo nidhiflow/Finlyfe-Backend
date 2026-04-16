@@ -125,18 +125,18 @@ router.post('/verify-otp', async (req, res) => {
             return res.status(400).json({ error: 'Verification code has expired. Please request a new one.' });
         }
 
-        // Mark OTP as used
-        await query('UPDATE otp_codes SET used = true WHERE id = $1', [otp.id]);
-
         if (type === 'reset') {
-            // Password reset is handled in /reset-password
+            // Don't mark as used yet — let /reset-password consume it
             return res.json({ message: 'Code verified', verified: true });
         }
+
+        // Mark OTP as used (for signup flow)
+        await query('UPDATE otp_codes SET used = true WHERE id = $1', [otp.id]);
 
         // Create user account
         const userId = uuidv4();
         await query(
-            'INSERT INTO users (id, name, email, password_hash) VALUES ($1, $2, $3, $4)',
+            'INSERT INTO users (id, name, email, password) VALUES ($1, $2, $3, $4)',
             [userId, otp.name, email, otp.password]
         );
 
@@ -223,11 +223,11 @@ router.post('/login', async (req, res) => {
         const user = rows[0];
 
         // Handle case where user logged in via OAuth previously
-        if (!user.password_hash) {
+        if (!user.password) {
             return res.status(401).json({ error: 'Invalid email or password' });
         }
 
-        const validPassword = bcrypt.compareSync(password, user.password_hash);
+        const validPassword = bcrypt.compareSync(password, user.password);
         if (!validPassword) {
             return res.status(401).json({ error: 'Invalid email or password' });
         }
@@ -416,7 +416,7 @@ router.post('/reset-password', async (req, res) => {
 
         // Update password
         const hashedPassword = bcrypt.hashSync(newPassword, 10);
-        await query('UPDATE users SET password_hash = $1 WHERE email = $2', [hashedPassword, email]);
+        await query('UPDATE users SET password = $1 WHERE email = $2', [hashedPassword, email]);
 
         // Mark OTP as used
         await query('UPDATE otp_codes SET used = true WHERE id = $1', [otp.id]);
@@ -484,19 +484,19 @@ router.put('/password', authenticateToken, async (req, res) => {
         const user = rows[0];
         
         // Handle OAuth users without password
-        if (!user.password_hash) {
+        if (!user.password) {
             const hash = bcrypt.hashSync(newPassword, 10);
-            await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.userId]);
+            await query('UPDATE users SET password = $1 WHERE id = $2', [hash, req.userId]);
             return res.json({ message: 'Password updated successfully' });
         }
 
-        const validPassword = bcrypt.compareSync(currentPassword, user.password_hash);
+        const validPassword = bcrypt.compareSync(currentPassword, user.password);
         if (!validPassword) {
             return res.status(401).json({ error: 'Current password is incorrect' });
         }
 
         const hashedPassword = bcrypt.hashSync(newPassword, 10);
-        await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashedPassword, req.userId]);
+        await query('UPDATE users SET password = $1 WHERE id = $2', [hashedPassword, req.userId]);
 
         res.json({ message: 'Password changed successfully' });
     } catch (err) {
@@ -517,8 +517,8 @@ router.delete('/account', authenticateToken, async (req, res) => {
 
         if (password) {
             const user = rows[0];
-            if (user.password_hash) {
-                const validPassword = bcrypt.compareSync(password, user.password_hash);
+            if (user.password) {
+                const validPassword = bcrypt.compareSync(password, user.password);
                 if (!validPassword) {
                     return res.status(401).json({ error: 'Incorrect password' });
                 }

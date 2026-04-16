@@ -5,73 +5,95 @@ export async function syncSchema() {
   try {
     await client.query('BEGIN');
 
-    // Users
+    // Users — matches finly-db schema
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
-        id VARCHAR(255) PRIMARY KEY,
-        email VARCHAR(255) UNIQUE NOT NULL,
-        password_hash VARCHAR(255) NOT NULL,
-        name VARCHAR(255),
-        phone VARCHAR(255),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        email_verified BOOLEAN DEFAULT false,
+        phone TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
       )
     `);
 
-    // Accounts
+    // Safely add columns that may not exist yet on users
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT false`);
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT`);
+
+    // If the old column name 'password_hash' exists, rename it to 'password'
+    try {
+      const { rows: cols } = await client.query(`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'password_hash'
+      `);
+      if (cols.length > 0) {
+        await client.query(`ALTER TABLE users RENAME COLUMN password_hash TO password`);
+      }
+    } catch(e) { /* ignore */ }
+
+    // Accounts — matches finly-db schema (includes parent_id for sub-accounts)
     await client.query(`
       CREATE TABLE IF NOT EXISTS accounts (
-        id VARCHAR(255) PRIMARY KEY,
-        user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
-        name VARCHAR(255) NOT NULL,
-        type VARCHAR(50) NOT NULL,
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        parent_id TEXT REFERENCES accounts(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
         balance NUMERIC DEFAULT 0,
-        icon VARCHAR(50),
-        color VARCHAR(50),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        icon TEXT,
+        color TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
       )
     `);
 
-    // Categories
+    // Safely add parent_id if missing
+    await client.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS parent_id TEXT REFERENCES accounts(id) ON DELETE CASCADE`);
+
+    // Categories — matches finly-db schema
     await client.query(`
       CREATE TABLE IF NOT EXISTS categories (
-        id VARCHAR(255) PRIMARY KEY,
-        user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
-        name VARCHAR(255) NOT NULL,
-        type VARCHAR(50) NOT NULL,
-        icon VARCHAR(50),
-        color VARCHAR(50),
-        parent_id VARCHAR(255) REFERENCES categories(id) ON DELETE CASCADE,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        icon TEXT,
+        color TEXT,
+        parent_id TEXT REFERENCES categories(id) ON DELETE CASCADE
       )
     `);
 
-    // Transactions
+    // Transactions — matches finly-db schema
     await client.query(`
       CREATE TABLE IF NOT EXISTS transactions (
-        id VARCHAR(255) PRIMARY KEY,
-        user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
-        type VARCHAR(50) DEFAULT 'expense',
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
         amount NUMERIC NOT NULL,
-        category_id VARCHAR(255) REFERENCES categories(id) ON DELETE SET NULL,
-        account_id VARCHAR(255) REFERENCES accounts(id) ON DELETE CASCADE,
-        to_account_id VARCHAR(255),
+        category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
+        account_id TEXT REFERENCES accounts(id) ON DELETE CASCADE,
+        to_account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+        date TEXT NOT NULL,
         note TEXT,
-        date TIMESTAMP NOT NULL,
-        repeat_group_id VARCHAR(255),
-        repeat_end_date VARCHAR(50),
         photo TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        repeat_group_id TEXT,
+        repeat_end_date TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
       )
     `);
 
-    // Safely add columns that may not exist yet
-    await client.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS type VARCHAR(50) DEFAULT 'expense'`);
+    // Safely add columns that may not exist yet on transactions
+    await client.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'expense'`);
     await client.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS note TEXT`);
-    await client.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS to_account_id VARCHAR(255)`);
+    await client.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS to_account_id TEXT`);
     await client.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS photo TEXT`);
+    await client.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS repeat_group_id TEXT`);
+    await client.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS repeat_end_date TEXT`);
 
-    // Make account_id nullable (existing DB may have NOT NULL + FK constraint)
+    // Make account_id nullable (existing DB may have NOT NULL constraint)
     try { await client.query(`ALTER TABLE transactions ALTER COLUMN account_id DROP NOT NULL`); } catch(e) {}
+
     // Drop FK constraints on account_id and category_id so frontend local IDs don't cause errors
     try {
       const { rows: fks } = await client.query(`
@@ -84,81 +106,118 @@ export async function syncSchema() {
       }
     } catch(e) {}
 
-    // Savings Goals
+    // AI Chat Messages — matches finly-db schema
     await client.query(`
-      CREATE TABLE IF NOT EXISTS savings_goals (
-        id VARCHAR(255) PRIMARY KEY,
-        user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
-        name VARCHAR(255) NOT NULL,
-        target_amount NUMERIC NOT NULL,
-        current_amount NUMERIC DEFAULT 0,
-        deadline TIMESTAMP,
-        icon VARCHAR(50),
-        color VARCHAR(50),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      CREATE TABLE IF NOT EXISTS ai_chat_messages (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
       )
     `);
 
-    // Settings
+    // Budgets — matches finly-db schema (uses 'period' column)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS budgets (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+        amount NUMERIC NOT NULL,
+        period TEXT NOT NULL
+      )
+    `);
+
+    // If old 'month' column exists, rename to 'period'
+    try {
+      const { rows: budgetCols } = await client.query(`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'budgets' AND column_name = 'month'
+      `);
+      if (budgetCols.length > 0) {
+        // Check if 'period' already exists
+        const { rows: periodCols } = await client.query(`
+          SELECT column_name FROM information_schema.columns
+          WHERE table_name = 'budgets' AND column_name = 'period'
+        `);
+        if (periodCols.length === 0) {
+          await client.query(`ALTER TABLE budgets RENAME COLUMN month TO period`);
+        }
+      }
+    } catch(e) {}
+
+    // Drop the unique constraint if it references 'month' and re-add with 'period'
+    try {
+      await client.query(`ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_user_id_category_id_month_key`);
+    } catch(e) {}
+
+    // Savings Goals — matches finly-db schema (includes month, category_id, account_id)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS savings_goals (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        target_amount NUMERIC NOT NULL,
+        current_amount NUMERIC DEFAULT 0,
+        month TEXT,
+        category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
+        account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    // Safely add columns that may not exist yet on savings_goals
+    await client.query(`ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS month TEXT`);
+    await client.query(`ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS category_id TEXT REFERENCES categories(id) ON DELETE SET NULL`);
+    await client.query(`ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL`);
+
+    // Settings — matches finly-db schema
     await client.query(`
       CREATE TABLE IF NOT EXISTS settings (
-        user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
-        key VARCHAR(100) NOT NULL,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        key TEXT NOT NULL,
         value TEXT,
         PRIMARY KEY (user_id, key)
       )
     `);
 
-    // Budgets
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS budgets (
-        id VARCHAR(255) PRIMARY KEY,
-        user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
-        category_id VARCHAR(255) REFERENCES categories(id) ON DELETE CASCADE,
-        amount NUMERIC NOT NULL,
-        month VARCHAR(7) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(user_id, category_id, month)
-      )
-    `);
-
-    // AI Chat Messages
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS ai_chat_messages (
-        id VARCHAR(255) PRIMARY KEY,
-        user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
-        role VARCHAR(50) NOT NULL,
-        content TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // OTP Codes
+    // OTP Codes — matches finly-db schema
     await client.query(`
       CREATE TABLE IF NOT EXISTS otp_codes (
-        id VARCHAR(255) PRIMARY KEY,
-        email VARCHAR(255) NOT NULL,
-        code VARCHAR(50) NOT NULL,
-        type VARCHAR(50) NOT NULL,
-        name VARCHAR(255),
-        password VARCHAR(255),
+        id TEXT PRIMARY KEY,
+        email TEXT NOT NULL,
+        code TEXT NOT NULL,
+        type TEXT NOT NULL,
+        name TEXT,
+        password TEXT,
         expires_at TIMESTAMP NOT NULL,
         used BOOLEAN DEFAULT false,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT NOW()
       )
     `);
 
-    // Login Devices
+    // Login Devices — matches finly-db schema
     await client.query(`
       CREATE TABLE IF NOT EXISTS login_devices (
-        id VARCHAR(255) PRIMARY KEY,
-        user_id VARCHAR(255) REFERENCES users(id) ON DELETE CASCADE,
-        device_hash VARCHAR(255) NOT NULL,
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        device_hash TEXT NOT NULL,
         device_info TEXT NOT NULL,
-        ip_address VARCHAR(255),
-        first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        ip_address TEXT,
+        first_seen TIMESTAMP DEFAULT NOW(),
+        last_seen TIMESTAMP DEFAULT NOW(),
         UNIQUE(user_id, device_hash)
+      )
+    `);
+
+    // Bookmarks — matches finly-db schema
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS bookmarks (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(user_id, transaction_id)
       )
     `);
 
