@@ -27,7 +27,7 @@ router.get('/', async (req, res) => {
       WHERE b.user_id = $1`;
     const params = [req.userId];
     if (month) {
-      sql += ` AND b.period = $2`;
+      sql += ` AND (b.period = $2 OR b.period IS NULL)`;
       params.push(month);
     }
     sql += ` ORDER BY c.name ASC`;
@@ -57,6 +57,36 @@ router.post('/', async (req, res) => {
     res.json({ message: 'Budgets updated successfully' });
   } catch (err) {
     console.error('Save budgets error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update budget
+router.put('/:id', async (req, res) => {
+  const { id } = req.params;
+  const { amount, category_id } = req.body;
+  try {
+    const result = await query(
+      `UPDATE budgets SET amount = $1, category_id = COALESCE($2, category_id) WHERE id = $3 AND user_id = $4 RETURNING *`,
+      [amount, category_id, id, req.userId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Budget not found" });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Update budget error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete budget
+router.delete('/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await query('DELETE FROM budgets WHERE id = $1 AND user_id = $2 RETURNING *', [id, req.userId]);
+    if (result.rows.length === 0) return res.status(404).json({ error: "Budget not found" });
+    res.json({ message: "Budget deleted" });
+  } catch (err) {
+    console.error('Delete budget error:', err);
     res.status(500).json({ error: err.message });
   }
 });
