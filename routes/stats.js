@@ -43,42 +43,52 @@ router.get('/summary', async (req, res) => {
   }
 });
 
-// Get finly score
+// Get finly score (0-100 scale)
 router.get('/finly-score', async (req, res) => {
   try {
     const { month } = req.query;
-    // Calculate a simple score based on income vs expenses ratio
     let sql, params;
     if (month) {
       sql = `SELECT 
         COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) as income,
-        COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) as expense
+        COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) as expense,
+        COUNT(*) as tx_count
        FROM transactions WHERE user_id = $1 AND LEFT(date, 7) = $2`;
       params = [req.userId, month];
     } else {
       sql = `SELECT 
         COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) as income,
-        COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) as expense
+        COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) as expense,
+        COUNT(*) as tx_count
        FROM transactions WHERE user_id = $1`;
       params = [req.userId];
     }
 
     const result = await query(sql, params);
-    const { income, expense } = result.rows[0];
+    const { income, expense, tx_count } = result.rows[0];
     const incomeNum = parseFloat(income);
     const expenseNum = parseFloat(expense);
+    const txCount = parseInt(tx_count);
 
-    let score = 500; // base score
+    let score = 0;
     if (incomeNum > 0) {
+      // Savings rate component (0-50 points)
+      const savingsRate = (incomeNum - expenseNum) / incomeNum;
+      const savingsPoints = Math.max(0, Math.min(50, Math.round(savingsRate * 100)));
+
+      // Expense ratio component (0-30 points) - lower ratio = better
       const ratio = expenseNum / incomeNum;
-      if (ratio <= 0.5) score = 900;
-      else if (ratio <= 0.7) score = 800;
-      else if (ratio <= 0.85) score = 700;
-      else if (ratio <= 1.0) score = 600;
-      else score = 400;
+      const ratioPoints = ratio <= 0.5 ? 30 : ratio <= 0.7 ? 25 : ratio <= 0.85 ? 18 : ratio <= 1.0 ? 10 : 0;
+
+      // Activity/tracking component (0-20 points)
+      const activityPoints = Math.min(20, txCount * 2);
+
+      score = Math.min(100, Math.max(0, savingsPoints + ratioPoints + activityPoints));
+    } else if (txCount > 0) {
+      score = Math.min(15, txCount * 2); // Some tracking but no income yet
     }
 
-    const label = score >= 800 ? 'Excellent' : score >= 700 ? 'Good' : score >= 600 ? 'Fair' : 'Needs Work';
+    const label = score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : score >= 20 ? 'Needs Work' : 'Getting Started';
 
     res.json({ score, label });
   } catch (err) {
