@@ -6,14 +6,24 @@ const router = express.Router();
 
 router.use(authenticateToken);
 
-// Get budgets with category info and spent amounts
+// Get budgets with spent amounts
 router.get('/', async (req, res) => {
   const { month } = req.query; // format: 'YYYY-MM'
   try {
-    // Get budgets with category details and calculated spend
+    // Auto-create table if it doesn't exist
+    await query(`
+      CREATE TABLE IF NOT EXISTS budgets (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        category_id TEXT,
+        amount NUMERIC NOT NULL DEFAULT 0,
+        period TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
     let sql = `
       SELECT b.id, b.category_id, b.amount, b.period,
-             c.name as category_name, c.icon, c.color,
              COALESCE((
                SELECT SUM(t.amount)
                FROM transactions t
@@ -23,14 +33,13 @@ router.get('/', async (req, res) => {
                  ${month ? `AND LEFT(t.date, 7) = $2` : ''}
              ), 0) as spent
       FROM budgets b
-      LEFT JOIN categories c ON b.category_id = c.id
       WHERE b.user_id = $1`;
     const params = [req.userId];
     if (month) {
       sql += ` AND (b.period = $2 OR b.period IS NULL)`;
       params.push(month);
     }
-    sql += ` ORDER BY c.name ASC`;
+    sql += ` ORDER BY b.created_at ASC`;
 
     const result = await query(sql, params);
     res.json({ categories: result.rows });
@@ -44,6 +53,18 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   const data = req.body; 
   try {
+    // Auto-create table if it doesn't exist
+    await query(`
+      CREATE TABLE IF NOT EXISTS budgets (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        category_id TEXT,
+        amount NUMERIC NOT NULL DEFAULT 0,
+        period TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
     const budgets = Array.isArray(data) ? data : [data];
     for (const b of budgets) {
       const { category_id, amount, month } = b;
