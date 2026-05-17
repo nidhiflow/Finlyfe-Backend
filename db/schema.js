@@ -221,6 +221,18 @@ export async function syncSchema() {
       )
     `);
 
+    // Budgets — per-category monthly budget limits
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS budgets (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        category_id TEXT,
+        amount NUMERIC NOT NULL DEFAULT 0,
+        period TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
     await client.query('COMMIT');
     console.log("✅ Database schema synchronized successfully.");
   } catch (error) {
