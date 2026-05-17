@@ -64,6 +64,8 @@ router.post('/', async (req, res) => {
         created_at TIMESTAMP DEFAULT NOW()
       )
     `);
+    // Drop foreign key constraint if it exists (categories live in frontend Context)
+    try { await query(`ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_category_id_fkey`); } catch(e) {}
 
     const budgets = Array.isArray(data) ? data : [data];
     for (const b of budgets) {
