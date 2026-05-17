@@ -32,14 +32,16 @@ router.get('/', async (req, res) => {
         created_at TIMESTAMP DEFAULT NOW()
       )
     `);
+    // Add created_at column if missing (old tables don't have it)
+    try { await query(`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()`); } catch(e) {}
 
-    let sql = `SELECT id, category_id, amount, period, created_at FROM budgets WHERE user_id = $1`;
+    let sql = `SELECT id, category_id, amount, period FROM budgets WHERE user_id = $1`;
     const params = [req.userId];
     if (month) {
       sql += ` AND (period = $2 OR period IS NULL)`;
       params.push(month);
     }
-    sql += ` ORDER BY created_at ASC`;
+    sql += ` ORDER BY id ASC`;
 
     const result = await query(sql, params);
     res.json({ categories: result.rows });
