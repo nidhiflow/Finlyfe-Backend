@@ -10,7 +10,18 @@ router.use(authenticateToken);
 router.get('/', async (req, res) => {
   const { month } = req.query; // format: 'YYYY-MM'
   try {
-    // Auto-create table if it doesn't exist
+    // Ensure budgets table exists without FK constraints
+    // First, try to drop all FK constraints on the table
+    try {
+      const fks = await query(`
+        SELECT constraint_name FROM information_schema.table_constraints 
+        WHERE table_name = 'budgets' AND constraint_type = 'FOREIGN KEY'
+      `);
+      for (const fk of fks.rows) {
+        await query(`ALTER TABLE budgets DROP CONSTRAINT IF EXISTS "${fk.constraint_name}"`);
+      }
+    } catch(e) { /* table might not exist yet */ }
+
     await query(`
       CREATE TABLE IF NOT EXISTS budgets (
         id TEXT PRIMARY KEY,
@@ -21,8 +32,6 @@ router.get('/', async (req, res) => {
         created_at TIMESTAMP DEFAULT NOW()
       )
     `);
-    // Drop foreign key constraint if it exists
-    try { await query(`ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_category_id_fkey`); } catch(e) {}
 
     let sql = `SELECT id, category_id, amount, period, created_at FROM budgets WHERE user_id = $1`;
     const params = [req.userId];
@@ -44,7 +53,16 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   const data = req.body; 
   try {
-    // Auto-create table if it doesn't exist
+    // Drop all FK constraints dynamically
+    try {
+      const fks = await query(`
+        SELECT constraint_name FROM information_schema.table_constraints 
+        WHERE table_name = 'budgets' AND constraint_type = 'FOREIGN KEY'
+      `);
+      for (const fk of fks.rows) {
+        await query(`ALTER TABLE budgets DROP CONSTRAINT IF EXISTS "${fk.constraint_name}"`);
+      }
+    } catch(e) {}
     await query(`
       CREATE TABLE IF NOT EXISTS budgets (
         id TEXT PRIMARY KEY,
@@ -55,8 +73,6 @@ router.post('/', async (req, res) => {
         created_at TIMESTAMP DEFAULT NOW()
       )
     `);
-    // Drop foreign key constraint if it exists (categories live in frontend Context)
-    try { await query(`ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_category_id_fkey`); } catch(e) {}
 
     const budgets = Array.isArray(data) ? data : [data];
     for (const b of budgets) {
