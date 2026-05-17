@@ -6,7 +6,7 @@ const router = express.Router();
 
 router.use(authenticateToken);
 
-// Get budgets with spent amounts
+// Get budgets
 router.get('/', async (req, res) => {
   const { month } = req.query; // format: 'YYYY-MM'
   try {
@@ -21,25 +21,16 @@ router.get('/', async (req, res) => {
         created_at TIMESTAMP DEFAULT NOW()
       )
     `);
+    // Drop foreign key constraint if it exists
+    try { await query(`ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_category_id_fkey`); } catch(e) {}
 
-    let sql = `
-      SELECT b.id, b.category_id, b.amount, b.period,
-             COALESCE((
-               SELECT SUM(t.amount)
-               FROM transactions t
-               WHERE t.category_id = b.category_id
-                 AND t.user_id = b.user_id
-                 AND t.type = 'expense'
-                 ${month ? `AND LEFT(t.date, 7) = $2` : ''}
-             ), 0) as spent
-      FROM budgets b
-      WHERE b.user_id = $1`;
+    let sql = `SELECT id, category_id, amount, period, created_at FROM budgets WHERE user_id = $1`;
     const params = [req.userId];
     if (month) {
-      sql += ` AND (b.period = $2 OR b.period IS NULL)`;
+      sql += ` AND (period = $2 OR period IS NULL)`;
       params.push(month);
     }
-    sql += ` ORDER BY b.created_at ASC`;
+    sql += ` ORDER BY created_at ASC`;
 
     const result = await query(sql, params);
     res.json({ categories: result.rows });
