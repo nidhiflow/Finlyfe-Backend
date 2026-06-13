@@ -1,5 +1,5 @@
 import express from 'express';
-import { query } from '../db/index.js';
+import { query, isSavings } from '../db/index.js';
 import { uploadImage, deleteImage } from '../services/cloudinary.js';
 import { authenticateToken } from '../middleware/auth.js';
 
@@ -7,47 +7,60 @@ const router = express.Router();
 
 router.use(authenticateToken);
 
+function mapTransactionRow(row) {
+  if (!row) return row;
+  const isSaving = isSavings(row.category_id, row.category_name, row.note);
+  if (isSaving && row.type === 'expense') {
+    return { ...row, type: 'savings' };
+  }
+  return row;
+}
+
 // Get all transactions
 router.get('/', async (req, res) => {
   try {
     const { month, category_id, startDate, endDate, type, search, limit, offset } = req.query;
-    let sql = 'SELECT * FROM transactions WHERE user_id = $1';
+    let sql = `SELECT t.*, c.name as category_name, a.name as account_name 
+               FROM transactions t 
+               LEFT JOIN categories c ON t.category_id = c.id 
+               LEFT JOIN accounts a ON t.account_id = a.id 
+               WHERE t.user_id = $1`;
     const params = [req.userId];
     let idx = 2;
 
     if (month) {
-      sql += ` AND LEFT(date, 7) = $${idx++}`;
+      sql += ` AND LEFT(t.date, 7) = $${idx++}`;
       params.push(month);
     }
     if (startDate) {
-      sql += ` AND date >= $${idx++}`;
+      sql += ` AND t.date >= $${idx++}`;
       params.push(startDate);
     }
     if (endDate) {
-      sql += ` AND date <= $${idx++}`;
+      sql += ` AND t.date <= $${idx++}`;
       params.push(endDate);
     }
     if (category_id) {
-      sql += ` AND category_id = $${idx++}`;
+      sql += ` AND t.category_id = $${idx++}`;
       params.push(category_id);
     }
     if (type) {
-      sql += ` AND type = $${idx++}`;
+      sql += ` AND t.type = $${idx++}`;
       params.push(type);
     }
     if (search) {
-      sql += ` AND note ILIKE $${idx}`;
+      sql += ` AND t.note ILIKE $${idx}`;
       params.push(`%${search}%`);
       idx++;
     }
 
-    sql += ' ORDER BY date DESC, created_at DESC';
+    sql += ' ORDER BY t.date DESC, t.created_at DESC';
 
     if (limit) { sql += ` LIMIT $${idx++}`; params.push(parseInt(limit)); }
     if (offset) { sql += ` OFFSET $${idx++}`; params.push(parseInt(offset)); }
 
     const result = await query(sql, params);
-    res.json(result.rows);
+    res.json(result.rows.map(mapTransactionRow));
   } catch (err) {
     console.error('Get transactions error:', err);
     res.status(500).json({ error: err.message });
@@ -58,18 +71,28 @@ router.get('/', async (req, res) => {
 router.get('/recurring', async (req, res) => {
   try {
     const result = await query(
-      "SELECT * FROM transactions WHERE user_id = $1 AND (is_recurring = true OR repeat_group_id IS NOT NULL) ORDER BY date DESC",
+      `SELECT t.*, c.name as category_name, a.name as account_name 
+       FROM transactions t 
+       LEFT JOIN categories c ON t.category_id = c.id 
+       LEFT JOIN accounts a ON t.account_id = a.id 
+       WHERE t.user_id = $1 AND (t.is_recurring = true OR t.repeat_group_id IS NOT NULL) 
+       ORDER BY t.date DESC`,
       [req.userId]
     );
-    res.json(result.rows);
+    res.json(result.rows.map(mapTransactionRow));
   } catch (err) {
     // Fallback if is_recurring column doesn't exist
     try {
       const result = await query(
-        "SELECT * FROM transactions WHERE user_id = $1 AND repeat_group_id IS NOT NULL ORDER BY date DESC",
+        `SELECT t.*, c.name as category_name, a.name as account_name 
+         FROM transactions t 
+         LEFT JOIN categories c ON t.category_id = c.id 
+         LEFT JOIN accounts a ON t.account_id = a.id 
+         WHERE t.user_id = $1 AND t.repeat_group_id IS NOT NULL 
+         ORDER BY t.date DESC`,
         [req.userId]
       );
-      res.json(result.rows);
+      res.json(result.rows.map(mapTransactionRow));
     } catch (err2) {
       res.json([]);
     }
@@ -79,9 +102,14 @@ router.get('/recurring', async (req, res) => {
 // Get single transaction
 router.get('/:id', async (req, res) => {
   try {
-    const result = await query('SELECT * FROM transactions WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+    const sql = `SELECT t.*, c.name as category_name, a.name as account_name 
+                 FROM transactions t 
+                 LEFT JOIN categories c ON t.category_id = c.id 
+                 LEFT JOIN accounts a ON t.account_id = a.id 
+                 WHERE t.id = $1 AND t.user_id = $2`;
+    const result = await query(sql, [req.params.id, req.userId]);
     if (result.rows.length === 0) return res.status(404).json({ error: "Transaction not found" });
-    res.json(result.rows[0]);
+    res.json(mapTransactionRow(result.rows[0]));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -109,7 +137,7 @@ router.post('/', async (req, res) => {
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
         [id, req.userId, type || 'expense', amount, category_id || null, account_id || null, to_account_id || null, description, date, photoUrl]
       );
-      return res.status(201).json(result.rows[0]);
+      return res.status(201).json(mapTransactionRow(result.rows[0]));
     } catch (insertErr) {
       console.error('Insert attempt 1 failed:', insertErr.message);
       // Fallback: try without to_account_id and note (old schema)
@@ -118,7 +146,7 @@ router.post('/', async (req, res) => {
          VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
         [id, req.userId, type || 'expense', amount, category_id || null, account_id || null, date]
       );
-      return res.status(201).json(result.rows[0]);
+      return res.status(201).json(mapTransactionRow(result.rows[0]));
     }
   } catch (err) {
     console.error('Create transaction error:', err);
@@ -147,7 +175,7 @@ router.put('/:id', async (req, res) => {
          WHERE id = $9 AND user_id = $10 RETURNING *`,
         [type || 'expense', amount, category_id || null, account_id || null, to_account_id || null, note || '', date, photoUrl, req.params.id, req.userId]
       );
-      return res.json(result.rows[0]);
+      return res.json(mapTransactionRow(result.rows[0]));
     } catch (updateErr) {
       // Fallback for old schema
       const result = await query(
@@ -155,7 +183,7 @@ router.put('/:id', async (req, res) => {
          WHERE id = $6 AND user_id = $7 RETURNING *`,
         [type || 'expense', amount, category_id || null, account_id || null, date, req.params.id, req.userId]
       );
-      return res.json(result.rows[0]);
+      return res.json(mapTransactionRow(result.rows[0]));
     }
   } catch (err) {
     console.error('Update transaction error:', err);
