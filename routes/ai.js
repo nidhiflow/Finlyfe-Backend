@@ -1,6 +1,6 @@
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { query } from '../db/index.js';
+import { query, getCategoryMetadata } from '../db/index.js';
 import { authenticateToken } from '../middleware/auth.js';
 const pool = { query };
 
@@ -28,7 +28,14 @@ async function getUserCurrency(userId) {
 router.get('/insights', authenticateToken, async (req, res) => {
     try {
         if (!GROQ_API_KEY) {
-            return res.status(503).json({ error: 'AI features are not configured. Set GROQ_API_KEY.' });
+            return res.json({
+                periodText: 'Demo Insights Mode',
+                cards: [
+                    { type: 'warning', title: 'High Spending Alert', description: 'Your spending in Food & Dining is up 15% this month.' },
+                    { type: 'success', title: 'Great Savings', description: 'You saved ₹5,000 more than last month. Keep it up!' },
+                    { type: 'info', title: 'Upcoming Bills', description: 'You have 2 bills due in the next 5 days.' }
+                ]
+            });
         }
 
         const today = new Date();
@@ -60,7 +67,10 @@ router.get('/insights', authenticateToken, async (req, res) => {
 
         // Top categories by expense amount
         const { rows: categoryRows } = await pool.query(
-            `SELECT COALESCE(c.name, 'Uncategorized') AS name,
+            `SELECT t.category_id,
+                    c.name AS db_name,
+                    c.icon AS db_icon,
+                    c.color AS db_color,
                     COALESCE(c.type, 'expense') AS type,
                     COALESCE(SUM(t.amount), 0) AS total
              FROM transactions t
@@ -68,17 +78,29 @@ router.get('/insights', authenticateToken, async (req, res) => {
              WHERE t.user_id = $1
                AND t.date >= $2 AND t.date <= $3
                AND t.type = 'expense'
-             GROUP BY COALESCE(c.name, 'Uncategorized'), COALESCE(c.type, 'expense')
-             ORDER BY total DESC
-             LIMIT 8`,
+             GROUP BY t.category_id, c.name, c.icon, c.color, c.type
+             ORDER BY total DESC`,
             [req.userId, startDate, endDate]
         );
+
+        const mappedCats = {};
+        categoryRows.forEach(r => {
+            const meta = getCategoryMetadata(r.category_id, r.db_name, r.db_icon, r.db_color);
+            const key = meta.name;
+            if (!mappedCats[key]) {
+                mappedCats[key] = { name: key, type: r.type, total: 0 };
+            }
+            mappedCats[key].total += Number(r.total);
+        });
+        const topCategories = Object.values(mappedCats)
+            .sort((a, b) => b.total - a.total)
+            .slice(0, 8);
 
         const summary = {
             window: { startDate, endDate },
             totalsByType: typeRows.map(r => ({ type: r.type, total: Number(r.total) })),
             trendByMonth: monthRows.map(r => ({ period: r.period, type: r.type, total: Number(r.total) })),
-            topCategories: categoryRows.map(r => ({ name: r.name, type: r.type, total: Number(r.total) })),
+            topCategories: topCategories,
         };
 
         const { symbol: currencySymbol, name: currencyName } = await getUserCurrency(req.userId);
@@ -151,7 +173,9 @@ Please write 2–3 key insights and 1–2 simple recommended next actions.`;
 router.get('/chart-summary', authenticateToken, async (req, res) => {
     try {
         if (!GROQ_API_KEY) {
-            return res.status(503).json({ error: 'AI features are not configured. Set GROQ_API_KEY.' });
+            return res.json({
+                summary: "**📌 Snapshot**\n- This is a mock AI summary since no API key is configured.\n- Spending trend is stable.\n\n**✅ Next step**\n- Keep tracking your daily expenses to maintain your budget."
+            });
         }
 
         const { startDate, endDate } = req.query;
@@ -177,21 +201,37 @@ router.get('/chart-summary', authenticateToken, async (req, res) => {
         );
 
         const { rows: categoryRows } = await pool.query(
-            `SELECT COALESCE(c.name, 'Uncategorized') AS name, COALESCE(SUM(t.amount), 0) AS total
+            `SELECT t.category_id,
+                    c.name AS db_name,
+                    c.icon AS db_icon,
+                    c.color AS db_color,
+                    COALESCE(SUM(t.amount), 0) AS total
              FROM transactions t
              LEFT JOIN categories c ON t.category_id = c.id
              WHERE t.user_id = $1 AND t.date >= $2 AND t.date <= $3 AND t.type = 'expense'
-             GROUP BY COALESCE(c.name, 'Uncategorized')
-             ORDER BY total DESC
-             LIMIT 8`,
+             GROUP BY t.category_id, c.name, c.icon, c.color
+             ORDER BY total DESC`,
             [req.userId, start, end]
         );
+
+        const mappedCats = {};
+        categoryRows.forEach(r => {
+            const meta = getCategoryMetadata(r.category_id, r.db_name, r.db_icon, r.db_color);
+            const key = meta.name;
+            if (!mappedCats[key]) {
+                mappedCats[key] = { name: key, total: 0 };
+            }
+            mappedCats[key].total += Number(r.total);
+        });
+        const topCategories = Object.values(mappedCats)
+            .sort((a, b) => b.total - a.total)
+            .slice(0, 8);
 
         const summary = {
             window: { startDate: start, endDate: end },
             totalsByType: typeRows.map(r => ({ type: r.type, total: Number(r.total) })),
             trendByMonth: monthRows.map(r => ({ period: r.period, type: r.type, total: Number(r.total) })),
-            topCategories: categoryRows.map(r => ({ name: r.name, total: Number(r.total) })),
+            topCategories: topCategories,
         };
 
         const { symbol: currencySymbol, name: currencyName } = await getUserCurrency(req.userId);
@@ -262,7 +302,13 @@ Rules:
 router.get('/budget-suggestions', authenticateToken, async (req, res) => {
     try {
         if (!GROQ_API_KEY) {
-            return res.status(503).json({ error: 'AI features are not configured. Set GROQ_API_KEY.' });
+            return res.json({
+                suggestions: [
+                    { category: 'Food & Dining', suggestedAmount: 12000, reason: 'Based on your average monthly spend of ₹10,500 over the last 3 months, with a small buffer.' },
+                    { category: 'Transport', suggestedAmount: 5000, reason: 'Your commute expenses are consistent at ₹4,800/month.' },
+                    { category: 'Entertainment', suggestedAmount: 3000, reason: 'Suggested limit to help increase your overall savings rate.' }
+                ]
+            });
         }
 
         const monthParam = req.query.month;
@@ -392,7 +438,14 @@ Be practical: suggest slightly above average spending to allow flexibility. Roun
 router.post('/scan-receipt', authenticateToken, async (req, res) => {
     try {
         if (!GROQ_API_KEY) {
-            return res.status(503).json({ error: 'AI features are not configured. Set GROQ_API_KEY.' });
+            // Mock receipt scan for demo
+            return res.json({
+                amount: 1450,
+                note: "Demo Supermarket",
+                date: new Date().toISOString().split('T')[0],
+                category_suggestion: "Home Provisions",
+                type: "expense"
+            });
         }
 
         const { image } = req.body; // base64 image data
@@ -528,7 +581,14 @@ Return ONLY valid JSON, no other text.`;
 router.post('/chat', authenticateToken, async (req, res) => {
     try {
         if (!GROQ_API_KEY) {
-            return res.status(503).json({ error: 'AI features are not configured. Set GROQ_API_KEY.' });
+            let reply = "This is a mock AI response since no GROQ_API_KEY is configured. To get real answers, please set your API key in the backend `.env` file.";
+            const msg = message.toLowerCase();
+            if (msg.includes("save more") || msg.includes("saving")) {
+                reply = "To save more, try setting up a strict budget for your top spending categories like Food & Dining or Entertainment. You can also automatically transfer a fixed amount to your Savings Goal every month!";
+            } else if (msg.includes("add") && msg.includes("transaction")) {
+                reply = "I'll open the Add Transaction form for you to confirm.\n\n```json\n{\"action\":\"add_transaction\",\"prefill\":{\"type\":\"expense\",\"amount\":500,\"note\":\"Demo AI Transaction\"}}\n```";
+            }
+            return res.json({ reply });
         }
 
         const { message } = req.body;

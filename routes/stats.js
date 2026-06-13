@@ -1,5 +1,5 @@
 import express from 'express';
-import { query } from '../db/index.js';
+import { query, isSavings, getCategoryMetadata } from '../db/index.js';
 import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -13,29 +13,52 @@ router.get('/summary', async (req, res) => {
     let sql, params;
 
     if (month) {
-      sql = `SELECT 
-        COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) as total_income,
-        COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) as total_expense
-       FROM transactions WHERE user_id = $1 AND LEFT(date, 7) = $2`;
+      sql = `SELECT t.*, c.name as category_name 
+             FROM transactions t 
+             LEFT JOIN categories c ON t.category_id = c.id 
+             WHERE t.user_id = $1 AND LEFT(t.date, 7) = $2`;
       params = [req.userId, month];
     } else {
-      sql = `SELECT 
-        COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) as total_income,
-        COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) as total_expense
-       FROM transactions WHERE user_id = $1`;
+      sql = `SELECT t.*, c.name as category_name 
+             FROM transactions t 
+             LEFT JOIN categories c ON t.category_id = c.id 
+             WHERE t.user_id = $1`;
       params = [req.userId];
     }
 
     const result = await query(sql, params);
-    const summary = result.rows[0];
-    const income = parseFloat(summary.total_income);
-    const expense = parseFloat(summary.total_expense);
-    const balance = income - expense;
+    
+    let income = 0;
+    let expense = 0;
+    let savings = 0;
+
+    for (const row of result.rows) {
+      const amt = parseFloat(row.amount || 0);
+      const catId = row.category_id;
+      const catName = row.category_name;
+      const note = row.note;
+      const type = row.type;
+
+      const isSaving = isSavings(catId, catName, note);
+
+      if (type === 'income') {
+        income += amt;
+      } else if (type === 'expense') {
+        if (isSaving) {
+          savings += amt;
+        } else {
+          expense += amt;
+        }
+      }
+    }
+
+    const balance = income - expense - savings;
+    
     res.json({
       income,
       expense,
       balance,
-      savings: Math.max(0, balance)
+      savings
     });
   } catch (err) {
     console.error('Stats summary error:', err);
@@ -49,26 +72,42 @@ router.get('/finly-score', async (req, res) => {
     const { month } = req.query;
     let sql, params;
     if (month) {
-      sql = `SELECT 
-        COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) as income,
-        COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) as expense,
-        COUNT(*) as tx_count
-       FROM transactions WHERE user_id = $1 AND LEFT(date, 7) = $2`;
+      sql = `SELECT t.*, c.name as category_name
+             FROM transactions t
+             LEFT JOIN categories c ON t.category_id = c.id
+             WHERE t.user_id = $1 AND LEFT(t.date, 7) = $2`;
       params = [req.userId, month];
     } else {
-      sql = `SELECT 
-        COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) as income,
-        COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) as expense,
-        COUNT(*) as tx_count
-       FROM transactions WHERE user_id = $1`;
+      sql = `SELECT t.*, c.name as category_name
+             FROM transactions t
+             LEFT JOIN categories c ON t.category_id = c.id
+             WHERE t.user_id = $1`;
       params = [req.userId];
     }
 
     const result = await query(sql, params);
-    const { income, expense, tx_count } = result.rows[0];
-    const incomeNum = parseFloat(income);
-    const expenseNum = parseFloat(expense);
-    const txCount = parseInt(tx_count);
+    
+    let incomeNum = 0;
+    let expenseNum = 0;
+    const txCount = result.rows.length;
+
+    for (const row of result.rows) {
+      const amt = parseFloat(row.amount || 0);
+      const catId = row.category_id;
+      const catName = row.category_name;
+      const note = row.note;
+      const type = row.type;
+
+      const isSaving = isSavings(catId, catName, note);
+
+      if (type === 'income') {
+        incomeNum += amt;
+      } else if (type === 'expense') {
+        if (!isSaving) {
+          expenseNum += amt;
+        }
+      }
+    }
 
     let score = 0;
     if (incomeNum > 0) {
@@ -101,9 +140,9 @@ router.get('/finly-score', async (req, res) => {
 router.get('/category-breakdown', async (req, res) => {
   const { month } = req.query;
   try {
-    let sql = `SELECT c.id as category_id, c.name as category_name, c.icon, c.color, t.type, SUM(t.amount) as total
+    let sql = `SELECT t.category_id, t.type, SUM(t.amount) as total, c.name as category_name, c.icon, c.color
        FROM transactions t
-       JOIN categories c ON t.category_id = c.id
+       LEFT JOIN categories c ON t.category_id = c.id
        WHERE t.user_id = $1`;
     const params = [req.userId];
     let idx = 2;
@@ -113,10 +152,24 @@ router.get('/category-breakdown', async (req, res) => {
       params.push(month);
     }
 
-    sql += ` GROUP BY c.id, c.name, c.icon, c.color, t.type ORDER BY total DESC`;
+    sql += ` GROUP BY t.category_id, t.type, c.name, c.icon, c.color ORDER BY total DESC`;
 
     const result = await query(sql, params);
-    res.json(result.rows);
+    
+    const breakdown = result.rows.map(row => {
+      const catId = row.category_id;
+      const meta = getCategoryMetadata(catId, row.category_name, row.icon, row.color);
+      return {
+        category_id: catId,
+        category_name: meta.name,
+        icon: meta.icon,
+        color: meta.color,
+        type: row.type,
+        total: parseFloat(row.total)
+      };
+    });
+    
+    res.json(breakdown);
   } catch (err) {
     console.error('Category breakdown error:', err);
     res.status(500).json({ error: err.message });
@@ -147,6 +200,96 @@ router.get('/daily-expenses', async (req, res) => {
     })));
   } catch (err) {
     console.error('Daily expenses error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Personalized notifications
+router.get('/notifications', async (req, res) => {
+  const userId = req.userId || (req.user && req.user.id);
+  try {
+    const notifications = [];
+    const now = new Date();
+    const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+    // 1. Budget Alerts
+    const budgetsSql = `
+      SELECT b.id, b.category_id, b.amount, b.period
+      FROM budgets b
+      WHERE b.user_id = $1
+    `;
+    const budgets = await query(budgetsSql, [userId]);
+
+    const expensesSql = `
+      SELECT category_id, amount, note
+      FROM transactions
+      WHERE user_id = $1 AND LEFT(date, 7) = $2 AND type = 'expense'
+    `;
+    const expenses = await query(expensesSql, [userId, monthStr]);
+
+    const expensesMap = {};
+    expenses.rows.forEach(t => {
+      const catId = t.category_id;
+      const isSaving = isSavings(catId, null, t.note);
+      if (isSaving) return; // Exclude savings from budget calculation
+
+      const amt = parseFloat(t.amount || 0);
+      expensesMap[catId] = (expensesMap[catId] || 0) + amt;
+    });
+    
+    budgets.rows.forEach(b => {
+      const spent = expensesMap[b.category_id] || 0;
+      const amount = parseFloat(b.amount);
+      const meta = getCategoryMetadata(b.category_id, null, null, null);
+      
+      if (amount > 0) {
+        const pct = spent / amount;
+        if (pct >= 1) {
+          notifications.push({
+            title: "Budget Exceeded",
+            desc: `You've exceeded your ${meta.name} budget.`,
+            time: "Today",
+            color: "#EF4444"
+          });
+        } else if (pct >= 0.8) {
+          notifications.push({
+            title: "Budget Alert",
+            desc: `You've used ${Math.round(pct * 100)}% of your ${meta.name} budget`,
+            time: "Today",
+            color: "#FFB703"
+          });
+        }
+      }
+    });
+
+    // 2. Savings Goals
+    const goals = await query('SELECT name, current_amount, target_amount FROM savings_goals WHERE user_id = $1', [userId]);
+    goals.rows.forEach(g => {
+      const current = parseFloat(g.current_amount);
+      const target = parseFloat(g.target_amount);
+      if (target > 0) {
+        const pct = current / target;
+        if (pct >= 1) {
+          notifications.push({
+            title: "Goal Reached!",
+            desc: `Congratulations! You reached your ${g.name} goal!`,
+            time: "Today",
+            color: "#22C55E"
+          });
+        } else if (pct >= 0.5) {
+          notifications.push({
+            title: "Goal Milestone",
+            desc: `You're ${Math.round(pct * 100)}% to your ${g.name} goal!`,
+            time: "Today",
+            color: "#4CC9F0"
+          });
+        }
+      }
+    });
+
+    res.json(notifications);
+  } catch (err) {
+    console.error('Notifications error:', err);
     res.status(500).json({ error: err.message });
   }
 });

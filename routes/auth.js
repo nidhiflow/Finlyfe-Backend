@@ -215,6 +215,27 @@ router.post('/login', async (req, res) => {
             return res.status(400).json({ error: 'Email and password are required' });
         }
 
+        // ── Demo account bypass ──────────────────────────────────────────────
+        // The login screen shows demo@finly.app / demo123 — make it always work.
+        if (email === 'demo@finly.app' && password === 'demo123') {
+            let { rows: demoRows } = await query('SELECT * FROM users WHERE email = $1', [email]);
+            if (demoRows.length === 0) {
+                // Auto-create the demo user on first use
+                const demoId = uuidv4();
+                const demoHash = bcrypt.hashSync('demo123', 10);
+                await query(
+                    'INSERT INTO users (id, name, email, password, email_verified) VALUES ($1, $2, $3, $4, $5)',
+                    [demoId, 'Demo User', email, demoHash, true]
+                );
+                await seedDefaultsForUser(demoId);
+                demoRows = [{ id: demoId, name: 'Demo User', email }];
+            }
+            const demo = demoRows[0];
+            const token = jwt.sign({ id: demo.id }, JWT_SECRET, { expiresIn: '30d' });
+            return res.json({ token, user: { id: demo.id, name: demo.name, email: demo.email } });
+        }
+        // ────────────────────────────────────────────────────────────────────
+
         const { rows } = await query('SELECT * FROM users WHERE email = $1', [email]);
         if (rows.length === 0) {
             return res.status(401).json({ error: 'Invalid email or password' });

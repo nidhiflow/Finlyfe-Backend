@@ -35,20 +35,6 @@ export async function seedDefaultsForUser(userId) {
       }
     }
 
-    // Default accounts
-    await client.query(
-      'INSERT INTO accounts (id, user_id, name, type, balance, icon, color) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-      [uuidv4(), userId, 'Cash', 'cash', 0, '💵', '#2ECC71']
-    );
-    await client.query(
-      'INSERT INTO accounts (id, user_id, name, type, balance, icon, color) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-      [uuidv4(), userId, 'Bank Account', 'bank', 0, '🏦', '#3498DB']
-    );
-    await client.query(
-      'INSERT INTO accounts (id, user_id, name, type, balance, icon, color) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-      [uuidv4(), userId, 'Credit Card', 'credit_card', 0, '💳', '#E74C3C']
-    );
-
     // Default settings
     await client.query('INSERT INTO settings (user_id, key, value) VALUES ($1, $2, $3)', [userId, 'currency', 'INR']);
     await client.query('INSERT INTO settings (user_id, key, value) VALUES ($1, $2, $3)', [userId, 'currencySymbol', '₹']);
