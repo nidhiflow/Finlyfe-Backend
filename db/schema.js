@@ -3,10 +3,11 @@ import { pool } from './index.js';
 export async function syncSchema() {
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
+    // 1. Execute Consolidated Table Creation, Column Alterations, and Index Creations in 1 roundtrip
+    const consolidatedSchemaQuery = `
+      BEGIN;
 
-    // Users — matches finly-db schema
-    await client.query(`
+      -- Users table
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -15,26 +16,11 @@ export async function syncSchema() {
         email_verified BOOLEAN DEFAULT false,
         phone TEXT,
         created_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
+      );
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT false;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
 
-    // Safely add columns that may not exist yet on users
-    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT false`);
-    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT`);
-
-    // If the old column name 'password_hash' exists, rename it to 'password'
-    try {
-      const { rows: cols } = await client.query(`
-        SELECT column_name FROM information_schema.columns
-        WHERE table_name = 'users' AND column_name = 'password_hash'
-      `);
-      if (cols.length > 0) {
-        await client.query(`ALTER TABLE users RENAME COLUMN password_hash TO password`);
-      }
-    } catch(e) { /* ignore */ }
-
-    // Accounts — matches finly-db schema (includes parent_id for sub-accounts)
-    await client.query(`
+      -- Accounts table
       CREATE TABLE IF NOT EXISTS accounts (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -45,14 +31,10 @@ export async function syncSchema() {
         icon TEXT,
         color TEXT,
         created_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
+      );
+      ALTER TABLE accounts ADD COLUMN IF NOT EXISTS parent_id TEXT REFERENCES accounts(id) ON DELETE CASCADE;
 
-    // Safely add parent_id if missing
-    await client.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS parent_id TEXT REFERENCES accounts(id) ON DELETE CASCADE`);
-
-    // Categories — matches finly-db schema
-    await client.query(`
+      -- Categories table
       CREATE TABLE IF NOT EXISTS categories (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -61,11 +43,9 @@ export async function syncSchema() {
         icon TEXT,
         color TEXT,
         parent_id TEXT REFERENCES categories(id) ON DELETE CASCADE
-      )
-    `);
+      );
 
-    // Transactions — matches finly-db schema
-    await client.query(`
+      -- Transactions table
       CREATE TABLE IF NOT EXISTS transactions (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -80,79 +60,35 @@ export async function syncSchema() {
         repeat_group_id TEXT,
         repeat_end_date TEXT,
         created_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
+      );
+      ALTER TABLE transactions ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'expense';
+      ALTER TABLE transactions ADD COLUMN IF NOT EXISTS note TEXT;
+      ALTER TABLE transactions ADD COLUMN IF NOT EXISTS to_account_id TEXT;
+      ALTER TABLE transactions ADD COLUMN IF NOT EXISTS photo TEXT;
+      ALTER TABLE transactions ADD COLUMN IF NOT EXISTS repeat_group_id TEXT;
+      ALTER TABLE transactions ADD COLUMN IF NOT EXISTS repeat_end_date TEXT;
+      ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_recurring BOOLEAN DEFAULT false;
 
-    // Safely add columns that may not exist yet on transactions
-    await client.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'expense'`);
-    await client.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS note TEXT`);
-    await client.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS to_account_id TEXT`);
-    await client.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS photo TEXT`);
-    await client.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS repeat_group_id TEXT`);
-    await client.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS repeat_end_date TEXT`);
-
-    // Make account_id nullable (existing DB may have NOT NULL constraint)
-    try { await client.query(`ALTER TABLE transactions ALTER COLUMN account_id DROP NOT NULL`); } catch(e) {}
-
-    // Drop FK constraints on account_id and category_id so frontend local IDs don't cause errors
-    try {
-      const { rows: fks } = await client.query(`
-        SELECT constraint_name FROM information_schema.table_constraints
-        WHERE table_name = 'transactions' AND constraint_type = 'FOREIGN KEY'
-        AND (constraint_name LIKE '%account_id%' OR constraint_name LIKE '%category_id%' OR constraint_name LIKE '%to_account_id%')
-      `);
-      for (const fk of fks) {
-        await client.query(`ALTER TABLE transactions DROP CONSTRAINT IF EXISTS "${fk.constraint_name}"`);
-      }
-    } catch(e) {}
-
-    // AI Chat Messages — matches finly-db schema
-    await client.query(`
+      -- AI Chat Messages table
       CREATE TABLE IF NOT EXISTS ai_chat_messages (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         role TEXT NOT NULL,
         content TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
+      );
 
-    // Budgets — matches finly-db schema (uses 'period' column)
-    await client.query(`
+      -- Budgets table
       CREATE TABLE IF NOT EXISTS budgets (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
-        amount NUMERIC NOT NULL,
-        period TEXT NOT NULL
-      )
-    `);
+        category_id TEXT REFERENCES categories(id) ON DELETE CASCADE,
+        amount NUMERIC NOT NULL DEFAULT 0,
+        period TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
 
-    // If old 'month' column exists, rename to 'period'
-    try {
-      const { rows: budgetCols } = await client.query(`
-        SELECT column_name FROM information_schema.columns
-        WHERE table_name = 'budgets' AND column_name = 'month'
-      `);
-      if (budgetCols.length > 0) {
-        // Check if 'period' already exists
-        const { rows: periodCols } = await client.query(`
-          SELECT column_name FROM information_schema.columns
-          WHERE table_name = 'budgets' AND column_name = 'period'
-        `);
-        if (periodCols.length === 0) {
-          await client.query(`ALTER TABLE budgets RENAME COLUMN month TO period`);
-        }
-      }
-    } catch(e) {}
-
-    // Drop the unique constraint if it references 'month' and re-add with 'period'
-    try {
-      await client.query(`ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_user_id_category_id_month_key`);
-    } catch(e) {}
-
-    // Savings Goals — matches finly-db schema (includes month, category_id, account_id)
-    await client.query(`
+      -- Savings Goals table
       CREATE TABLE IF NOT EXISTS savings_goals (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -163,26 +99,20 @@ export async function syncSchema() {
         category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
         account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
         created_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
+      );
+      ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS month TEXT;
+      ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS category_id TEXT REFERENCES categories(id) ON DELETE SET NULL;
+      ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL;
 
-    // Safely add columns that may not exist yet on savings_goals
-    await client.query(`ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS month TEXT`);
-    await client.query(`ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS category_id TEXT REFERENCES categories(id) ON DELETE SET NULL`);
-    await client.query(`ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL`);
-
-    // Settings — matches finly-db schema
-    await client.query(`
+      -- Settings table
       CREATE TABLE IF NOT EXISTS settings (
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         key TEXT NOT NULL,
         value TEXT,
         PRIMARY KEY (user_id, key)
-      )
-    `);
+      );
 
-    // OTP Codes — matches finly-db schema
-    await client.query(`
+      -- OTP Codes table
       CREATE TABLE IF NOT EXISTS otp_codes (
         id TEXT PRIMARY KEY,
         email TEXT NOT NULL,
@@ -193,11 +123,9 @@ export async function syncSchema() {
         expires_at TIMESTAMP NOT NULL,
         used BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
+      );
 
-    // Login Devices — matches finly-db schema
-    await client.query(`
+      -- Login Devices table
       CREATE TABLE IF NOT EXISTS login_devices (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -207,36 +135,86 @@ export async function syncSchema() {
         first_seen TIMESTAMP DEFAULT NOW(),
         last_seen TIMESTAMP DEFAULT NOW(),
         UNIQUE(user_id, device_hash)
-      )
-    `);
+      );
 
-    // Bookmarks — matches finly-db schema
-    await client.query(`
+      -- Bookmarks table
       CREATE TABLE IF NOT EXISTS bookmarks (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
         created_at TIMESTAMP DEFAULT NOW(),
         UNIQUE(user_id, transaction_id)
-      )
-    `);
+      );
 
-    // Budgets — per-category monthly budget limits
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS budgets (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        category_id TEXT,
-        amount NUMERIC NOT NULL DEFAULT 0,
-        period TEXT,
-        created_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
+      -- Performance Indexes
+      CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions(user_id);
+      CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
+      CREATE INDEX IF NOT EXISTS idx_transactions_category_id ON transactions(category_id);
+      CREATE INDEX IF NOT EXISTS idx_categories_user_id ON categories(user_id);
+      CREATE INDEX IF NOT EXISTS idx_accounts_user_id ON accounts(user_id);
+      CREATE INDEX IF NOT EXISTS idx_budgets_user_id ON budgets(user_id);
+      CREATE INDEX IF NOT EXISTS idx_savings_goals_user_id ON savings_goals(user_id);
+      CREATE INDEX IF NOT EXISTS idx_transactions_is_recurring ON transactions(is_recurring);
 
-    await client.query('COMMIT');
+      COMMIT;
+    `;
+
+    await client.query(consolidatedSchemaQuery);
+
+    // 2. Conditional Schema Migrations (Run separately to handle errors gracefully)
+    
+    // Rename password_hash to password for legacy users
+    try {
+      const { rows: cols } = await client.query(`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'users' AND column_name = 'password_hash'
+      `);
+      if (cols.length > 0) {
+        await client.query(`ALTER TABLE users RENAME COLUMN password_hash TO password`);
+      }
+    } catch(e) { /* ignore */ }
+
+    // Make account_id nullable on transactions
+    try { 
+      await client.query(`ALTER TABLE transactions ALTER COLUMN account_id DROP NOT NULL`); 
+    } catch(e) { /* ignore */ }
+
+    // Drop FK constraints on transactions so frontend local IDs don't cause errors
+    try {
+      const { rows: fks } = await client.query(`
+        SELECT constraint_name FROM information_schema.table_constraints
+        WHERE table_name = 'transactions' AND constraint_type = 'FOREIGN KEY'
+        AND (constraint_name LIKE '%account_id%' OR constraint_name LIKE '%category_id%' OR constraint_name LIKE '%to_account_id%')
+      `);
+      for (const fk of fks) {
+        await client.query(`ALTER TABLE transactions DROP CONSTRAINT IF EXISTS "${fk.constraint_name}"`);
+      }
+    } catch(e) { /* ignore */ }
+
+    // Rename budgets.month to budgets.period if legacy column exists
+    try {
+      const { rows: budgetCols } = await client.query(`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'budgets' AND column_name = 'month'
+      `);
+      if (budgetCols.length > 0) {
+        const { rows: periodCols } = await client.query(`
+          SELECT column_name FROM information_schema.columns
+          WHERE table_name = 'budgets' AND column_name = 'period'
+        `);
+        if (periodCols.length === 0) {
+          await client.query(`ALTER TABLE budgets RENAME COLUMN month TO period`);
+        }
+      }
+    } catch(e) { /* ignore */ }
+
+    // Drop old budget constraints
+    try {
+      await client.query(`ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_user_id_category_id_month_key`);
+    } catch(e) { /* ignore */ }
+
     console.log("✅ Database schema synchronized successfully.");
   } catch (error) {
-    await client.query('ROLLBACK');
     console.error("❌ Error syncing database schema:", error);
     throw error;
   } finally {

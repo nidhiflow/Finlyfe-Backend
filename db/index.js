@@ -7,7 +7,10 @@ export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' || process.env.DATABASE_URL?.includes('neon.tech') 
     ? { rejectUnauthorized: false } 
-    : false
+    : false,
+  max: 10,
+  connectionTimeoutMillis: 5000, // 5 seconds connection timeout
+  idleTimeoutMillis: 10000       // 10 seconds idle timeout to release connection
 });
 
 export const query = (text, params) => pool.query(text, params);
