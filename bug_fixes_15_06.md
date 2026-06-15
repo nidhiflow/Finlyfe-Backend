@@ -36,3 +36,10 @@
 ### 4. Query Reliability Fixed (`routes/transactions.js`)
 * The `/api/transactions/recurring` endpoint query now directly succeeds without error fallback.
 * Endpoint latency dropped from **526ms** to **49ms** (~90.7% improvement).
+
+### 5. Render Build Compatibility (`package.json`)
+* Added a dummy `"build": "echo 'No build step required'"` script to `package.json`. This ensures that Render deployments do not fail if Render's default build command is set to `npm run build`.
+
+### 6. Mobile Data Sync & Demo Bypass (`routes/auth.js`)
+* **Verified Database Configuration**: Executed a production signup request and confirmed that the generated OTP was instantly queries-retrievable from the local connection. This confirmed that **both local and production backends target the exact same Neon database instance**.
+* **Demo OTP Bypass**: Introduced a login bypass check for `demo@finly.app` / `demo123` to allow mobile logins to bypass OTP verification (which previously sent OTPs to a mock email address), enabling the user to sync and view their previous data.
