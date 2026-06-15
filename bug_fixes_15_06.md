@@ -60,3 +60,12 @@
   2. Created a new migration file `004_optimize_and_sync_schema.sql` in the `finly-db` repository containing all database optimizations (recurring flag, phone columns, and performance indexes).
   3. Updated `schema/001_initial_schema.sql` in the `finly-db` repository to keep it fully aligned with the production schema structure.
   4. Committed and pushed all updates to the remote `finly-db` repository.
+
+## AI Receipt Scanning Feature (`routes/ai.js`, `api.ts`, `AddTransactionScreen.tsx`)
+* **Goal**: Implement the "Scan Receipt with AI" feature, transitioning it from a frontend mockup simulation into a real-time OCR and data extraction tool.
+* **Solutions Applied**:
+  1. **Backend Model Alignment**: Reconfigured the `/api/ai/scan-receipt` endpoint in the backend (`routes/ai.js`) to use Groq's verified vision model: `'llama-3.2-11b-vision-preview'`.
+  2. **Frontend API Integration**: Extended the frontend `aiAPI` service wrapper in `src/app/services/api.ts` to include the `scanReceipt(base64)` endpoint.
+  3. **File Selection & Upload Handler**: Integrated a hidden file input element in `AddTransactionScreen.tsx` triggered by clicking the "Scan Receipt with AI" button, letting users pick receipt images.
+  4. **Base64 Processing & Auto-fill**: Handled converting chosen image files into base64 format inside the browser, passing it to `aiAPI.scanReceipt`, and automatically populating `amount`, `note`, `date`, `category_id`, and `subcategoryId` using fuzzy category matching on success.
+  5. **Committed & Pushed**: Pushed all updates to backend (`main` and `Mukunthan` branches) and frontend (`main` branch) remote repositories.
