@@ -580,6 +580,11 @@ Return ONLY valid JSON, no other text.`;
 // POST /api/ai/chat — AI Agent chat
 router.post('/chat', authenticateToken, async (req, res) => {
     try {
+        const { message } = req.body;
+        if (!message) {
+            return res.status(400).json({ error: 'No message provided' });
+        }
+
         if (!GROQ_API_KEY) {
             let reply = "This is a mock AI response since no GROQ_API_KEY is configured. To get real answers, please set your API key in the backend `.env` file.";
             const msg = message.toLowerCase();
@@ -589,11 +594,6 @@ router.post('/chat', authenticateToken, async (req, res) => {
                 reply = "I'll open the Add Transaction form for you to confirm.\n\n```json\n{\"action\":\"add_transaction\",\"prefill\":{\"type\":\"expense\",\"amount\":500,\"note\":\"Demo AI Transaction\"}}\n```";
             }
             return res.json({ reply });
-        }
-
-        const { message } = req.body;
-        if (!message) {
-            return res.status(400).json({ error: 'No message provided' });
         }
 
         // Fetch user's categories (main + sub) and accounts for add-transaction intent
@@ -623,11 +623,63 @@ router.post('/chat', authenticateToken, async (req, res) => {
             }
         }
 
+        // Fetch user's actual financial context for personalization
+        let userAccounts = [];
+        let userTransactions = [];
+        let userBudgets = [];
+        let userGoals = [];
+
+        const { symbol: currencySymbol, name: currencyName } = await getUserCurrency(req.userId);
+
+        try {
+            const [accsRes, txsRes, bdgtsRes, goalsRes] = await Promise.all([
+                pool.query('SELECT name, balance, type FROM accounts WHERE user_id = $1', [req.userId]),
+                pool.query(
+                    `SELECT t.type, t.amount, t.date, t.note, c.name as category_name 
+                     FROM transactions t 
+                     LEFT JOIN categories c ON t.category_id = c.id 
+                     WHERE t.user_id = $1 
+                     ORDER BY t.date DESC LIMIT 50`,
+                    [req.userId]
+                ),
+                pool.query(
+                    `SELECT b.amount, b.period, c.name as category_name 
+                     FROM budgets b 
+                     LEFT JOIN categories c ON b.category_id = c.id 
+                     WHERE b.user_id = $1`,
+                    [req.userId]
+                ),
+                pool.query('SELECT name, target_amount, current_amount, month FROM savings_goals WHERE user_id = $1', [req.userId])
+            ]);
+
+            userAccounts = accsRes.rows;
+            userTransactions = txsRes.rows;
+            userBudgets = bdgtsRes.rows;
+            userGoals = goalsRes.rows;
+        } catch (err) {
+            console.error('AI chat: error fetching financial profile data', err.message || err);
+        }
+
+        // Format user financial context for the LLM prompt
+        const userProfileSummary = `
+User Financial Context:
+- Accounts and Balances:
+${userAccounts.map(a => `  * ${a.name} (${a.type}): ${currencySymbol}${a.balance}`).join('\n') || '  (No accounts found)'}
+
+- Budgets:
+${userBudgets.map(b => `  * Budget for category "${b.category_name || 'All'}": ${currencySymbol}${b.amount} (${b.period})`).join('\n') || '  (No budgets set)'}
+
+- Savings Goals:
+${userGoals.map(g => `  * Goal "${g.name}": Target ${currencySymbol}${g.target_amount}, Current ${currencySymbol}${g.current_amount} (Target Month: ${g.month || 'Not specified'})`).join('\n') || '  (No savings goals set)'}
+
+- Recent Transactions (Last 50):
+${userTransactions.map(t => `  * ${t.date} - ${t.type.toUpperCase()}: ${currencySymbol}${t.amount} (${t.category_name || 'Uncategorized'})${t.note ? ` - Note: "${t.note}"` : ''}`).join('\n') || '  (No transaction history found)'}
+`;
+
         // Limit how many categories/accounts we embed to keep prompts small
         const LIMITED_CATEGORIES = categoriesList.slice(0, 60);
         const LIMITED_ACCOUNTS = accountsList.slice(0, 20);
 
-        const { symbol: currencySymbol, name: currencyName } = await getUserCurrency(req.userId);
         const todayStr = new Date().toISOString().split('T')[0];
         const systemPrompt = `You are Finly AI, the in-app assistant for the Finly personal finance tracker.
 The user's currency is ${currencyName} (symbol ${currencySymbol}). Always express all monetary amounts in this currency and use its symbol (e.g. ${currencySymbol} for amounts).
@@ -641,6 +693,16 @@ Guidelines:
 - When explaining how to do something in the app, give step-by-step instructions
 - Use emoji sparingly for a friendly tone
 - Format responses with markdown for readability
+
+Here is the user's current financial profile:
+${userProfileSummary}
+
+When responding, use this context to provide highly personalized advice. For example:
+- Refer to specific accounts by name and balance.
+- Point out specific transactions or patterns (e.g. high spending in a certain category, recurring expenses, etc.) if they ask about how to save money or analyze spending.
+- Offer actionable budgeting tips based on their current budgets or goals.
+- Remind them of their savings goal progress if relevant.
+- Express all monetary values using their currency symbol ${currencySymbol}.
 
 When the user clearly wants to ADD or RECORD a transaction (expense or income), you must:
 1. Reply with a short friendly confirmation (e.g. "I'll open the Add Transaction form for you to confirm.")
