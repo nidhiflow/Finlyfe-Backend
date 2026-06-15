@@ -490,7 +490,7 @@ Use the single-total format ONLY when the receipt shows a single amount with no 
 Return ONLY valid JSON, no other text.`;
 
         const groqBody = {
-            model: 'llama-3.2-11b-vision-preview',
+            model: 'meta-llama/llama-4-scout-17b-16e-instruct',
             messages: [
                 {
                     role: 'user',
