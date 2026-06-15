@@ -45,14 +45,15 @@
 * **Demo OTP Bypass**: Introduced a login bypass check for `demo@finly.app` / `demo123` to allow mobile logins to bypass OTP verification (which previously sent OTPs to a mock email address), enabling the user to sync and view their previous data.
 
 ## Chatbot Response Personalization (`routes/ai.js`, `test_chatbot.js`)
-* **Symptom**: Chatbot responded with generic helper advice when asked for personalized financial insights (e.g., analyzing transactions or guiding savings).
-* **Root Causes**: The `/api/ai/chat` endpoint did not retrieve the user's transaction history, category budgets, or savings goals. It only fetched names of accounts and categories for input prefilling.
+* **Feature Goal**: Personalize the Finly AI Chatbot response dynamically using the user's actual database context (recent transactions, categories, budgets, and accounts) rather than returning fixed/generic guides.
 * **Solutions Applied**:
-  1. Updated the `/chat` route in `routes/ai.js` to query user accounts and balances, up to 50 recent transactions (joining categories), active category budgets, and savings goals using `Promise.all`.
-  2. Structured this data into a formatted `userProfileSummary` and injected it into the Groq Llama system prompt.
-  3. Tailored the model instructions to refer to specific accounts, transactions, budget categories, and goals by name and balance.
-  4. Updated `test_chatbot.js` to query for transaction analysis and savings guidance and verified it correctly utilizes real database records in the AI response.
-  5. Relocated message body extraction to the top of the route handler to avoid ReferenceError under fallback conditions.
+  1. **User Financial Context Queries**: Modified the `/chat` route in `routes/ai.js` to asynchronously query the logged-in user's accounts (including balances and types), up to 50 recent transactions, category budgets, and active savings goals.
+  2. **Prompt Injection**: Compiled these details into a structured `userProfileSummary` text block and injected it directly into the LLM system prompt.
+  3. **Data-backed Coaching Instructions**: Configured guidelines instructing Llama to quote actual account balances, target categories, specific numbers, and goals when users ask for financial advice.
+  4. **ReferenceError Fix**: Reordered message body extraction in `/chat` to resolve a ReferenceError when the API key was not configured (mock fallback mode).
+* **Verification Status**:
+  * Verified locally using `test_chatbot.js` for both login and chatbot request flow.
+  * Fully verified in-app on the active user interface (e.g., when a user asks *"How can I save more?"*, the chatbot extracts the user's exact database records—such as ₹5,000 and ₹200 expenses, a ₹10,000 income, and their SBI Savings account name—providing customized, context-aware advice).
 
 ## Database Health Ping & Repository Sync
 * **Solutions Applied**:
