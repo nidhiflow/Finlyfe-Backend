@@ -64,8 +64,9 @@
 ## AI Receipt Scanning Feature (`routes/ai.js`, `api.ts`, `AddTransactionScreen.tsx`)
 * **Goal**: Implement the "Scan Receipt with AI" feature, transitioning it from a frontend mockup simulation into a real-time OCR and data extraction tool.
 * **Solutions Applied**:
-  1. **Backend Model Alignment**: Reconfigured the `/api/ai/scan-receipt` endpoint in the backend (`routes/ai.js`) to use Groq's verified vision model: `'llama-3.2-11b-vision-preview'`.
-  2. **Frontend API Integration**: Extended the frontend `aiAPI` service wrapper in `src/app/services/api.ts` to include the `scanReceipt(base64)` endpoint.
-  3. **File Selection & Upload Handler**: Integrated a hidden file input element in `AddTransactionScreen.tsx` triggered by clicking the "Scan Receipt with AI" button, letting users pick receipt images.
-  4. **Base64 Processing & Auto-fill**: Handled converting chosen image files into base64 format inside the browser, passing it to `aiAPI.scanReceipt`, and automatically populating `amount`, `note`, `date`, `category_id`, and `subcategoryId` using fuzzy category matching on success.
-  5. **Committed & Pushed**: Pushed all updates to backend (`main` and `Mukunthan` branches) and frontend (`main` branch) remote repositories.
+  1. **Backend Model Alignment**: Confirmed and aligned the `/api/ai/scan-receipt` endpoint in the backend (`routes/ai.js`) to use Groq's active vision-capable model: `'meta-llama/llama-4-scout-17b-16e-instruct'`.
+  2. **Express Body Size Limit Fix (413 Payload Too Large)**: Increased Express's JSON and urlencoded payload limit to **50MB** (`app.use(express.json({ limit: '50mb' }))` in `index.js`). This resolved the 413 error occurring when uploading base64 receipt image payloads (which are larger than Express's default 100KB limit).
+  3. **Frontend API Integration**: Extended the frontend `aiAPI` service wrapper in `src/app/services/api.ts` to include the `scanReceipt(base64)` endpoint.
+  4. **File Selection & Upload Handler**: Integrated a hidden file input element in `AddTransactionScreen.tsx` triggered by clicking the "Scan Receipt with AI" button, letting users pick receipt images.
+  5. **Base64 Processing & Auto-fill**: Handled converting chosen image files into base64 format inside the browser, passing it to `aiAPI.scanReceipt`, and automatically populating `amount`, `note`, `date`, `category_id`, and `subcategoryId` using fuzzy category matching on success.
+  6. **Committed & Pushed**: Pushed all updates to backend (`main` and `Mukunthan` branches) and frontend (`main` branch) remote repositories.
