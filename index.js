@@ -19,8 +19,24 @@ app.use(cors());
 app.use(express.json());
 
 // Health check
-app.get("/api/health", (req, res) => {
-  res.json({ ok: true, message: "Finlyfe API is running" });
+app.get("/api/health", async (req, res) => {
+  const start = Date.now();
+  let dbStatus = "unknown";
+  let dbLatency = null;
+  try {
+    const { query } = await import("./db/index.js");
+    await query("SELECT 1");
+    dbStatus = "connected";
+    dbLatency = `${Date.now() - start}ms`;
+  } catch (err) {
+    dbStatus = `error: ${err.message}`;
+  }
+  res.json({ 
+    ok: true, 
+    message: "Finlyfe API is running",
+    database: dbStatus,
+    database_latency: dbLatency
+  });
 });
 
 // Mount Routes
