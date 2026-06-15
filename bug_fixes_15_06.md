@@ -53,3 +53,10 @@
   3. Tailored the model instructions to refer to specific accounts, transactions, budget categories, and goals by name and balance.
   4. Updated `test_chatbot.js` to query for transaction analysis and savings guidance and verified it correctly utilizes real database records in the AI response.
   5. Relocated message body extraction to the top of the route handler to avoid ReferenceError under fallback conditions.
+
+## Database Health Ping & Repository Sync
+* **Solutions Applied**:
+  1. Updated `/api/health` inside `index.js` to query the database (`SELECT 1`) on incoming health check requests, reporting database connection status and response latency in the response payload.
+  2. Created a new migration file `004_optimize_and_sync_schema.sql` in the `finly-db` repository containing all database optimizations (recurring flag, phone columns, and performance indexes).
+  3. Updated `schema/001_initial_schema.sql` in the `finly-db` repository to keep it fully aligned with the production schema structure.
+  4. Committed and pushed all updates to the remote `finly-db` repository.
