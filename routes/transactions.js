@@ -20,10 +20,11 @@ function mapTransactionRow(row) {
 router.get('/', async (req, res) => {
   try {
     const { month, category_id, startDate, endDate, type, search, limit, offset } = req.query;
-    let sql = `SELECT t.*, c.name as category_name, a.name as account_name 
+    let sql = `SELECT t.*, c.name as category_name, a.name as account_name, a2.name as to_account_name 
                FROM transactions t 
                LEFT JOIN categories c ON t.category_id = c.id 
                LEFT JOIN accounts a ON t.account_id = a.id 
+               LEFT JOIN accounts a2 ON t.to_account_id = a2.id 
                WHERE t.user_id = $1`;
     const params = [req.userId];
     let idx = 2;
@@ -71,10 +72,11 @@ router.get('/', async (req, res) => {
 router.get('/recurring', async (req, res) => {
   try {
     const result = await query(
-      `SELECT t.*, c.name as category_name, a.name as account_name 
+      `SELECT t.*, c.name as category_name, a.name as account_name, a2.name as to_account_name 
        FROM transactions t 
        LEFT JOIN categories c ON t.category_id = c.id 
        LEFT JOIN accounts a ON t.account_id = a.id 
+       LEFT JOIN accounts a2 ON t.to_account_id = a2.id 
        WHERE t.user_id = $1 AND (t.is_recurring = true OR t.repeat_group_id IS NOT NULL) 
        ORDER BY t.date DESC`,
       [req.userId]
@@ -84,10 +86,11 @@ router.get('/recurring', async (req, res) => {
     // Fallback if is_recurring column doesn't exist
     try {
       const result = await query(
-        `SELECT t.*, c.name as category_name, a.name as account_name 
+        `SELECT t.*, c.name as category_name, a.name as account_name, a2.name as to_account_name 
          FROM transactions t 
          LEFT JOIN categories c ON t.category_id = c.id 
          LEFT JOIN accounts a ON t.account_id = a.id 
+         LEFT JOIN accounts a2 ON t.to_account_id = a2.id 
          WHERE t.user_id = $1 AND t.repeat_group_id IS NOT NULL 
          ORDER BY t.date DESC`,
         [req.userId]
@@ -102,10 +105,11 @@ router.get('/recurring', async (req, res) => {
 // Get single transaction
 router.get('/:id', async (req, res) => {
   try {
-    const sql = `SELECT t.*, c.name as category_name, a.name as account_name 
+    const sql = `SELECT t.*, c.name as category_name, a.name as account_name, a2.name as to_account_name 
                  FROM transactions t 
                  LEFT JOIN categories c ON t.category_id = c.id 
                  LEFT JOIN accounts a ON t.account_id = a.id 
+                 LEFT JOIN accounts a2 ON t.to_account_id = a2.id 
                  WHERE t.id = $1 AND t.user_id = $2`;
     const result = await query(sql, [req.params.id, req.userId]);
     if (result.rows.length === 0) return res.status(404).json({ error: "Transaction not found" });
@@ -118,7 +122,8 @@ router.get('/:id', async (req, res) => {
 // Create transaction — accepts whatever columns exist in the DB
 router.post('/', async (req, res) => {
   try {
-    const { type, amount, category_id, account_id, to_account_id, date, note, photo, repeat_months } = req.body;
+    const { type, amount, category_id, subcategory_id, subcategoryId, account_id, to_account_id, date, note, photo, repeat_months } = req.body;
+    const subcatId = subcategory_id || subcategoryId || null;
 
     if (!amount || !date) {
       return res.status(400).json({ error: 'Amount and date are required' });
@@ -133,9 +138,9 @@ router.post('/', async (req, res) => {
     // Try inserting with all possible columns, fall back gracefully
     try {
       const result = await query(
-        `INSERT INTO transactions (id, user_id, type, amount, category_id, account_id, to_account_id, note, date, photo)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-        [id, req.userId, type || 'expense', amount, category_id || null, account_id || null, to_account_id || null, description, date, photoUrl]
+        `INSERT INTO transactions (id, user_id, type, amount, category_id, subcategory_id, account_id, to_account_id, note, date, photo)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+        [id, req.userId, type || 'expense', amount, category_id || null, subcatId, account_id || null, to_account_id || null, description, date, photoUrl]
       );
       return res.status(201).json(mapTransactionRow(result.rows[0]));
     } catch (insertErr) {
@@ -160,7 +165,8 @@ router.put('/:id', async (req, res) => {
     const { rows: existingRows } = await query('SELECT * FROM transactions WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
     if (existingRows.length === 0) return res.status(404).json({ error: "Transaction not found" });
 
-    const { type, amount, category_id, account_id, to_account_id, date, note, photo } = req.body;
+    const { type, amount, category_id, subcategory_id, subcategoryId, account_id, to_account_id, date, note, photo } = req.body;
+    const subcatId = subcategory_id || subcategoryId || null;
 
     let photoUrl = photo !== undefined ? photo : existingRows[0].photo;
     if (photo && !photo.startsWith('http')) {
@@ -171,9 +177,9 @@ router.put('/:id', async (req, res) => {
     try {
       const result = await query(
         `UPDATE transactions 
-         SET type = $1, amount = $2, category_id = $3, account_id = $4, to_account_id = $5, note = $6, date = $7, photo = $8
-         WHERE id = $9 AND user_id = $10 RETURNING *`,
-        [type || 'expense', amount, category_id || null, account_id || null, to_account_id || null, note || '', date, photoUrl, req.params.id, req.userId]
+         SET type = $1, amount = $2, category_id = $3, subcategory_id = $4, account_id = $5, to_account_id = $6, note = $7, date = $8, photo = $9
+         WHERE id = $10 AND user_id = $11 RETURNING *`,
+        [type || 'expense', amount, category_id || null, subcatId, account_id || null, to_account_id || null, note || '', date, photoUrl, req.params.id, req.userId]
       );
       return res.json(mapTransactionRow(result.rows[0]));
     } catch (updateErr) {

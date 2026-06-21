@@ -8,6 +8,7 @@ const router = express.Router();
 const CHAT_RETENTION_DAYS = 7;
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 const CURRENCY_SYMBOLS = { INR: '₹', USD: '$', EUR: '€', GBP: '£' };
@@ -437,7 +438,7 @@ Be practical: suggest slightly above average spending to allow flexibility. Roun
 // POST /api/ai/scan-receipt — Scan a receipt image and extract transaction details
 router.post('/scan-receipt', authenticateToken, async (req, res) => {
     try {
-        if (!GROQ_API_KEY) {
+        if (!GEMINI_API_KEY && !GROQ_API_KEY) {
             // Mock receipt scan for demo
             return res.json({
                 amount: 1450,
@@ -457,70 +458,147 @@ router.post('/scan-receipt', authenticateToken, async (req, res) => {
         if (image.startsWith('data:') && !image.startsWith('data:image/')) {
             return res.status(400).json({ error: 'Invalid image data' });
         }
-        const dataUrl = image.startsWith('data:')
-            ? image
-            : `data:image/jpeg;base64,${image}`;
 
         const scanPrompt = `Analyze this receipt or bill image.
 
+1. Category Classification:
+You MUST classify the receipt or its line items into one of the following exact category names:
+- "Food & Dining"
+- "Health"
+- "Personal Care"
+- "Home Provisions"
+- "Household"
+- "Investments"
+- "Transport"
+- "Trips & Leisure"
+- "Vehicle"
+- "Bills"
+- "Government"
+- "Gifts"
+- "Entertainment"
+- "Loans & Credits"
+- "Kids"
+- "Business"
+- "Savings"
+- "Other"
+
+Set the "category_suggestion" field to one of these exact strings.
+
+2. Currency Conversion:
+If the receipt is in USD ($) or any other non-INR currency, convert the amounts into Indian Rupees (INR / ₹) using an approximate exchange rate of 1 USD = 83 INR. All returned amount values in the JSON MUST be in INR.
+
+3. Format:
 If the receipt has multiple line items, categories, or groups (e.g. Veggies, Snacks, Beverages, Delivery, GST, Service Charge, Delivery Fee), you MUST return an "entries" array.
 
-For itemized bills (Swiggy, Zomato, Zepto, grocery bills, etc.), return one entry per category or group (e.g. Veggies, Snacks, Beverages, Delivery, Other/Tax). Use short "category_suggestion" labels that match the receipt. The sum of ALL entry amounts MUST equal the TRUE grand total paid, including GST, service charges, and delivery fees.
+For itemized bills (Swiggy, Zomato, Zepto, grocery bills, etc.), return one entry per category or group. The sum of ALL entry amounts MUST equal the TRUE grand total paid, including GST, service charges, and delivery fees.
 
 When the receipt HAS a line-item or category-wise breakdown, return a JSON object with:
 - "entries": array of objects, each with:
-  - "amount" (number)
-  - "category_suggestion" (string). Use labels like: "Fruits", "Vegetables", "Grocery", "Veggies", "Snacks", "Beverages", "Dairy", "Meat", "Delivery", "Tax", "Other".
-- Optionally "amount": number — the SAME GRAND TOTAL paid (including all taxes, GST, service charges, delivery fees, etc.).
-  - IMPORTANT: If you include "amount" together with "entries", then:
-    - "amount" MUST be exactly equal to the sum of all "entries[i].amount" (within normal rounding).
-    - NEVER set "amount" to the sum of entries PLUS any extra value.
-    - NEVER double or multiply totals. Do not return 2x or 3x the grand total.
+  - "amount" (number, in INR)
+  - "category_suggestion" (string, strictly one of the category names listed above)
+- "amount": number — the GRAND TOTAL paid (including all taxes, GST, service charges, delivery fees, etc., in INR).
+  - IMPORTANT: "amount" MUST be exactly equal to the sum of all "entries[i].amount".
 - "note": string (merchant/store name)
 - "date": string (YYYY-MM-DD or null)
 - "type": "expense"
 
 Use the single-total format ONLY when the receipt shows a single amount with no line items and no category breakdown. In that case return:
-- "amount": number (total paid)
+- "amount": number (total paid, in INR)
 - "note": string (merchant/store name)
 - "date": string (YYYY-MM-DD or null)
-- "category_suggestion": string (one of: Food, Home Provisions, Entertainment, Health, Household, Travel, Vehicle, Other)
+- "category_suggestion": string (strictly one of the category names listed above)
 - "type": "expense" or "income"
 
 Return ONLY valid JSON, no other text.`;
 
-        const groqBody = {
-            model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-            messages: [
-                {
-                    role: 'user',
-                    content: [
-                        { type: 'text', text: scanPrompt },
-                        { type: 'image_url', image_url: { url: dataUrl } }
-                    ]
+        let text = '';
+
+        if (GEMINI_API_KEY) {
+            // Extract mime type and raw base64 data
+            let mimeType = 'image/jpeg';
+            let base64Data = image;
+            if (image.startsWith('data:')) {
+                const match = image.match(/^data:(image\/[a-zA-Z+.-]+);base64,(.+)$/);
+                if (match) {
+                    mimeType = match[1];
+                    base64Data = match[2];
                 }
-            ],
-            temperature: 0.1,
-            max_tokens: 800
-        };
+            }
 
-        const groqResponse = await fetch(GROQ_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${GROQ_API_KEY}`
-            },
-            body: JSON.stringify(groqBody)
-        });
+            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+            const geminiBody = {
+                contents: [
+                    {
+                        parts: [
+                            { text: scanPrompt },
+                            {
+                                inlineData: {
+                                    mimeType: mimeType,
+                                    data: base64Data
+                                }
+                            }
+                        ]
+                    }
+                ],
+                generationConfig: {
+                    responseMimeType: 'application/json'
+                }
+            };
 
-        if (!groqResponse.ok) {
-            const errText = await groqResponse.text();
-            console.error('Groq scan error:', groqResponse.status, errText);
-            return res.status(502).json({ error: 'AI service error. Please try again.' });
+            const geminiResponse = await fetch(geminiUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(geminiBody)
+            });
+
+            if (!geminiResponse.ok) {
+                const errText = await geminiResponse.text();
+                console.error('Gemini scan error:', geminiResponse.status, errText);
+                return res.status(502).json({ error: 'AI service error. Please try again.' });
+            }
+
+            const geminiData = await geminiResponse.json();
+            text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        } else {
+            const dataUrl = image.startsWith('data:')
+                ? image
+                : `data:image/jpeg;base64,${image}`;
+
+            const groqBody = {
+                model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+                messages: [
+                    {
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: scanPrompt },
+                            { type: 'image_url', image_url: { url: dataUrl } }
+                        ]
+                    }
+                ],
+                temperature: 0.1,
+                max_tokens: 800
+            };
+
+            const groqResponse = await fetch(GROQ_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${GROQ_API_KEY}`
+                },
+                body: JSON.stringify(groqBody)
+            });
+
+            if (!groqResponse.ok) {
+                const errText = await groqResponse.text();
+                console.error('Groq scan error:', groqResponse.status, errText);
+                return res.status(502).json({ error: 'AI service error. Please try again.' });
+            }
+
+            const groqData = await groqResponse.json();
+            text = groqData.choices?.[0]?.message?.content || '';
         }
-
-        const groqData = await groqResponse.json();
-        const text = groqData.choices?.[0]?.message?.content || '';
 
         // Extract JSON from the response
         const jsonMatch = text.match(/\{[\s\S]*\}/);

@@ -68,6 +68,7 @@ export async function syncSchema() {
       ALTER TABLE transactions ADD COLUMN IF NOT EXISTS repeat_group_id TEXT;
       ALTER TABLE transactions ADD COLUMN IF NOT EXISTS repeat_end_date TEXT;
       ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_recurring BOOLEAN DEFAULT false;
+      ALTER TABLE transactions ADD COLUMN IF NOT EXISTS subcategory_id TEXT;
 
       -- AI Chat Messages table
       CREATE TABLE IF NOT EXISTS ai_chat_messages (
