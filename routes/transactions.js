@@ -122,7 +122,7 @@ router.get('/:id', async (req, res) => {
 // Create transaction — accepts whatever columns exist in the DB
 router.post('/', async (req, res) => {
   try {
-    const { type, amount, category_id, subcategory_id, subcategoryId, account_id, to_account_id, date, note, photo, repeat_months } = req.body;
+    const { type, amount, category_id, subcategory_id, subcategoryId, account_id, to_account_id, date, note, photo, is_recurring, repeat_frequency } = req.body;
     const subcatId = subcategory_id || subcategoryId || null;
 
     if (!amount || !date) {
@@ -138,9 +138,9 @@ router.post('/', async (req, res) => {
     // Try inserting with all possible columns, fall back gracefully
     try {
       const result = await query(
-        `INSERT INTO transactions (id, user_id, type, amount, category_id, subcategory_id, account_id, to_account_id, note, date, photo)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
-        [id, req.userId, type || 'expense', amount, category_id || null, subcatId, account_id || null, to_account_id || null, description, date, photoUrl]
+        `INSERT INTO transactions (id, user_id, type, amount, category_id, subcategory_id, account_id, to_account_id, note, date, photo, is_recurring, repeat_frequency)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+        [id, req.userId, type || 'expense', amount, category_id || null, subcatId, account_id || null, to_account_id || null, description, date, photoUrl, is_recurring || false, repeat_frequency || null]
       );
       return res.status(201).json(mapTransactionRow(result.rows[0]));
     } catch (insertErr) {
@@ -165,7 +165,7 @@ router.put('/:id', async (req, res) => {
     const { rows: existingRows } = await query('SELECT * FROM transactions WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
     if (existingRows.length === 0) return res.status(404).json({ error: "Transaction not found" });
 
-    const { type, amount, category_id, subcategory_id, subcategoryId, account_id, to_account_id, date, note, photo } = req.body;
+    const { type, amount, category_id, subcategory_id, subcategoryId, account_id, to_account_id, date, note, photo, is_recurring, repeat_frequency } = req.body;
     const subcatId = subcategory_id || subcategoryId || null;
 
     let photoUrl = photo !== undefined ? photo : existingRows[0].photo;
@@ -177,9 +177,9 @@ router.put('/:id', async (req, res) => {
     try {
       const result = await query(
         `UPDATE transactions 
-         SET type = $1, amount = $2, category_id = $3, subcategory_id = $4, account_id = $5, to_account_id = $6, note = $7, date = $8, photo = $9
-         WHERE id = $10 AND user_id = $11 RETURNING *`,
-        [type || 'expense', amount, category_id || null, subcatId, account_id || null, to_account_id || null, note || '', date, photoUrl, req.params.id, req.userId]
+         SET type = $1, amount = $2, category_id = $3, subcategory_id = $4, account_id = $5, to_account_id = $6, note = $7, date = $8, photo = $9, is_recurring = $10, repeat_frequency = $11
+         WHERE id = $12 AND user_id = $13 RETURNING *`,
+        [type || 'expense', amount, category_id || null, subcatId, account_id || null, to_account_id || null, note || '', date, photoUrl, is_recurring || false, repeat_frequency || null, req.params.id, req.userId]
       );
       return res.json(mapTransactionRow(result.rows[0]));
     } catch (updateErr) {
