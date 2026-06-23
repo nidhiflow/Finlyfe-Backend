@@ -151,6 +151,14 @@ export async function syncSchema() {
         UNIQUE(user_id, transaction_id)
       );
 
+      -- Page Analytics table (tracks which screens users visit)
+      CREATE TABLE IF NOT EXISTS page_analytics (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        page TEXT NOT NULL,
+        visited_at TIMESTAMP DEFAULT NOW()
+      );
+
       -- Performance Indexes
       CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions(user_id);
       CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
@@ -160,6 +168,9 @@ export async function syncSchema() {
       CREATE INDEX IF NOT EXISTS idx_budgets_user_id ON budgets(user_id);
       CREATE INDEX IF NOT EXISTS idx_savings_goals_user_id ON savings_goals(user_id);
       CREATE INDEX IF NOT EXISTS idx_transactions_is_recurring ON transactions(is_recurring);
+      CREATE INDEX IF NOT EXISTS idx_page_analytics_page ON page_analytics(page);
+      CREATE INDEX IF NOT EXISTS idx_page_analytics_user_id ON page_analytics(user_id);
+      CREATE INDEX IF NOT EXISTS idx_page_analytics_visited_at ON page_analytics(visited_at);
 
       COMMIT;
     `;

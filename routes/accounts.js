@@ -133,12 +133,24 @@ router.put('/:id', async (req, res) => {
   const { id } = req.params;
   const { name, type, balance, icon, color } = req.body;
   try {
-    const result = await query(
-      `UPDATE accounts 
-       SET name = $1, type = $2, balance = $3, icon = $4, color = $5
-       WHERE id = $6 AND user_id = $7 RETURNING *`,
-      [name, type, balance, icon, color, id, req.userId]
-    );
+    let result;
+    if (balance !== undefined && balance !== null && balance !== '') {
+      // Balance explicitly provided — update everything including opening balance
+      result = await query(
+        `UPDATE accounts 
+         SET name = $1, type = $2, balance = $3, icon = $4, color = $5
+         WHERE id = $6 AND user_id = $7 RETURNING *`,
+        [name, type, balance, icon, color, id, req.userId]
+      );
+    } else {
+      // Balance NOT provided — preserve the existing opening balance to avoid double-counting
+      result = await query(
+        `UPDATE accounts 
+         SET name = $1, type = $2, icon = $3, color = $4
+         WHERE id = $5 AND user_id = $6 RETURNING *`,
+        [name, type, icon, color, id, req.userId]
+      );
+    }
     if (result.rows.length === 0) return res.status(404).json({ error: "Account not found" });
     const updatedWithBalance = await getAccountWithBalance(req.userId, id);
     res.json(updatedWithBalance || result.rows[0]);
