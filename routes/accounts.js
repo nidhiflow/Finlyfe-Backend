@@ -1,16 +1,112 @@
 import express from 'express';
-import { query } from '../db/index.js';
+import { query, isSavings } from '../db/index.js';
 import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
 router.use(authenticateToken);
 
+async function getAccountWithBalance(userId, accountId) {
+  const accountsRes = await query('SELECT * FROM accounts WHERE user_id = $1 AND id = $2', [userId, accountId]);
+  if (accountsRes.rows.length === 0) return null;
+  const acc = accountsRes.rows[0];
+
+  const transactionsRes = await query(`
+    SELECT t.*, c.name as category_name 
+    FROM transactions t 
+    LEFT JOIN categories c ON t.category_id = c.id 
+    WHERE t.user_id = $1 AND (t.account_id = $2 OR t.to_account_id = $2)
+  `, [userId, accountId]);
+  const transactions = transactionsRes.rows;
+
+  let balanceAdjustment = 0;
+  for (const t of transactions) {
+    const amt = parseFloat(t.amount || 0);
+    const isSaving = isSavings(t.category_id, t.category_name, t.note);
+
+    if (t.type === 'income') {
+      if (t.account_id === accountId) {
+        balanceAdjustment += amt;
+      }
+    } else if (t.type === 'expense') {
+      if (!isSaving) {
+        if (t.account_id === accountId) {
+          balanceAdjustment -= amt;
+        }
+      }
+    } else if (t.type === 'transfer') {
+      if (t.account_id === accountId) {
+        balanceAdjustment -= amt;
+      }
+      if (t.to_account_id === accountId) {
+        balanceAdjustment += amt;
+      }
+    }
+  }
+
+  const initialBal = parseFloat(acc.balance || 0);
+  return {
+    ...acc,
+    balance: initialBal + balanceAdjustment
+  };
+}
+
+async function getAccountsWithBalances(userId) {
+  const accountsRes = await query('SELECT * FROM accounts WHERE user_id = $1 ORDER BY created_at ASC', [userId]);
+  const accounts = accountsRes.rows;
+
+  const transactionsRes = await query(`
+    SELECT t.*, c.name as category_name 
+    FROM transactions t 
+    LEFT JOIN categories c ON t.category_id = c.id 
+    WHERE t.user_id = $1
+  `, [userId]);
+  const transactions = transactionsRes.rows;
+
+  const balanceAdjustments = {};
+  for (const acc of accounts) {
+    balanceAdjustments[acc.id] = 0;
+  }
+
+  for (const t of transactions) {
+    const amt = parseFloat(t.amount || 0);
+    const isSaving = isSavings(t.category_id, t.category_name, t.note);
+
+    if (t.type === 'income') {
+      if (t.account_id && balanceAdjustments[t.account_id] !== undefined) {
+        balanceAdjustments[t.account_id] += amt;
+      }
+    } else if (t.type === 'expense') {
+      if (!isSaving) {
+        if (t.account_id && balanceAdjustments[t.account_id] !== undefined) {
+          balanceAdjustments[t.account_id] -= amt;
+        }
+      }
+    } else if (t.type === 'transfer') {
+      if (t.account_id && balanceAdjustments[t.account_id] !== undefined) {
+        balanceAdjustments[t.account_id] -= amt;
+      }
+      if (t.to_account_id && balanceAdjustments[t.to_account_id] !== undefined) {
+        balanceAdjustments[t.to_account_id] += amt;
+      }
+    }
+  }
+
+  return accounts.map(acc => {
+    const initialBal = parseFloat(acc.balance || 0);
+    const adj = balanceAdjustments[acc.id] || 0;
+    return {
+      ...acc,
+      balance: initialBal + adj
+    };
+  });
+}
+
 // Get all accounts
 router.get('/', async (req, res) => {
   try {
-    const result = await query('SELECT * FROM accounts WHERE user_id = $1 ORDER BY created_at ASC', [req.userId]);
-    res.json(result.rows);
+    const accountsWithBalances = await getAccountsWithBalances(req.userId);
+    res.json(accountsWithBalances);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -44,7 +140,8 @@ router.put('/:id', async (req, res) => {
       [name, type, balance, icon, color, id, req.userId]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "Account not found" });
-    res.json(result.rows[0]);
+    const updatedWithBalance = await getAccountWithBalance(req.userId, id);
+    res.json(updatedWithBalance || result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

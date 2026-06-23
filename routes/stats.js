@@ -52,7 +52,7 @@ router.get('/summary', async (req, res) => {
       }
     }
 
-    const balance = income - expense - savings;
+    const balance = income - expense;
     
     res.json({
       income,
