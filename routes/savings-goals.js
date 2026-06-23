@@ -18,13 +18,13 @@ router.get('/', async (req, res) => {
 
 // Create goal
 router.post('/', async (req, res) => {
-  const { name, target_amount, current_amount, deadline, icon, color } = req.body;
+  const { name, target_amount, current_amount, target_date, emoji, color, start_date, tracking_mode, type, linked_account, carry_forward, notes, status } = req.body;
   const id = Date.now().toString();
   try {
     const result = await query(
-      `INSERT INTO savings_goals (id, user_id, name, target_amount, current_amount, deadline, icon, color)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [id, req.user.id, name, target_amount, current_amount || 0, deadline, icon, color]
+      `INSERT INTO savings_goals (id, user_id, name, target_amount, current_amount, target_date, emoji, color, start_date, tracking_mode, type, linked_account, carry_forward, notes, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
+      [id, req.user.id, name, target_amount, current_amount || 0, target_date, emoji, color, start_date, tracking_mode, type, linked_account, carry_forward || false, notes, status || 'active']
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -35,13 +35,13 @@ router.post('/', async (req, res) => {
 // Update goal
 router.put('/:id', async (req, res) => {
   const { id } = req.params;
-  const { name, target_amount, current_amount, deadline, icon, color } = req.body;
+  const { name, target_amount, current_amount, target_date, emoji, color, start_date, tracking_mode, type, linked_account, carry_forward, notes, status } = req.body;
   try {
     const result = await query(
       `UPDATE savings_goals 
-       SET name = $1, target_amount = $2, current_amount = $3, deadline = $4, icon = $5, color = $6
-       WHERE id = $7 AND user_id = $8 RETURNING *`,
-      [name, target_amount, current_amount, deadline, icon, color, id, req.user.id]
+       SET name = $1, target_amount = $2, current_amount = $3, target_date = $4, emoji = $5, color = $6, start_date = $7, tracking_mode = $8, type = $9, linked_account = $10, carry_forward = $11, notes = $12, status = $13
+       WHERE id = $14 AND user_id = $15 RETURNING *`,
+      [name, target_amount, current_amount, target_date, emoji, color, start_date, tracking_mode, type, linked_account, carry_forward || false, notes, status || 'active', id, req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "Goal not found" });
     res.json(result.rows[0]);
