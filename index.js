@@ -11,6 +11,7 @@ import statsRoutes from "./routes/stats.js";
 import settingsRoutes from "./routes/settings.js";
 import budgetsRoutes from "./routes/budgets.js";
 import aiRoutes from "./routes/ai.js";
+import adminRoutes from "./routes/admin.js";
 import { initRecurrenceCron } from "./workers/recurrenceCron.js";
 
 const app = express();
@@ -51,6 +52,7 @@ app.use("/api/stats", statsRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/budgets", budgetsRoutes);
 app.use("/api/ai", aiRoutes);
+app.use("/api/admin", adminRoutes);
 
 // Mocks for Bookmarks to prevent fetch errors
 app.get("/api/bookmarks", (req, res) => res.json([]));
