@@ -11,6 +11,7 @@ import statsRoutes from "./routes/stats.js";
 import settingsRoutes from "./routes/settings.js";
 import budgetsRoutes from "./routes/budgets.js";
 import aiRoutes from "./routes/ai.js";
+import { initRecurrenceCron } from "./workers/recurrenceCron.js";
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -62,6 +63,8 @@ async function startServer() {
     // Only attempt DB sync if DATABASE_URL is present
     if (process.env.DATABASE_URL) {
       await syncSchema();
+      // Start background workers
+      initRecurrenceCron();
     } else {
       console.warn("⚠️ DATABASE_URL is not set. Database is not connected.");
     }

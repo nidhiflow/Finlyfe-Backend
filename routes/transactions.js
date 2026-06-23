@@ -122,7 +122,12 @@ router.get('/:id', async (req, res) => {
 // Create transaction — accepts whatever columns exist in the DB
 router.post('/', async (req, res) => {
   try {
-    const { type, amount, category_id, subcategory_id, subcategoryId, account_id, to_account_id, date, note, photo, is_recurring, repeat_frequency } = req.body;
+    const { 
+      type, amount, category_id, subcategory_id, subcategoryId, account_id, to_account_id, 
+      title, date, note, photo, is_recurring, repeat_frequency,
+      repeat_interval, repeat_day_of_month, repeat_end_type, repeat_occurrences_total,
+      auto_create, reminder_days_before, status, next_due_date
+    } = req.body;
     const subcatId = subcategory_id || subcategoryId || null;
 
     if (!amount || !date) {
@@ -135,12 +140,32 @@ router.post('/', async (req, res) => {
 
     const description = note || '';
 
-    // Try inserting with all possible columns, fall back gracefully
+    // Calculate next_due_date if not provided by frontend (though frontend will likely provide it)
+    let calculatedNextDue = next_due_date || null;
+    if (is_recurring && !calculatedNextDue) {
+      const d = new Date(date);
+      if (repeat_frequency === 'daily' || repeat_frequency === 'days') d.setDate(d.getDate() + (repeat_interval || 1));
+      else if (repeat_frequency === 'weekly' || repeat_frequency === 'weeks') d.setDate(d.getDate() + 7 * (repeat_interval || 1));
+      else if (repeat_frequency === 'monthly' || repeat_frequency === 'months') d.setMonth(d.getMonth() + (repeat_interval || 1));
+      else if (repeat_frequency === 'quarterly') d.setMonth(d.getMonth() + 3);
+      else if (repeat_frequency === 'yearly' || repeat_frequency === 'years') d.setFullYear(d.getFullYear() + (repeat_interval || 1));
+      calculatedNextDue = d.toISOString();
+    }
+
     try {
       const result = await query(
-        `INSERT INTO transactions (id, user_id, type, amount, category_id, subcategory_id, account_id, to_account_id, note, date, photo, is_recurring, repeat_frequency)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
-        [id, req.userId, type || 'expense', amount, category_id || null, subcatId, account_id || null, to_account_id || null, description, date, photoUrl, is_recurring || false, repeat_frequency || null]
+        `INSERT INTO transactions (
+          id, user_id, type, amount, category_id, subcategory_id, account_id, to_account_id, 
+          title, note, date, photo, is_recurring, repeat_frequency,
+          repeat_interval, repeat_day_of_month, next_due_date, repeat_end_type, 
+          repeat_occurrences_total, auto_create, reminder_days_before, status
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22) RETURNING *`,
+        [
+          id, req.userId, type || 'expense', amount, category_id || null, subcatId, account_id || null, to_account_id || null, 
+          title || null, description, date, photoUrl, is_recurring || false, repeat_frequency || null,
+          repeat_interval || null, repeat_day_of_month || null, calculatedNextDue, repeat_end_type || null,
+          repeat_occurrences_total || null, auto_create !== false, reminder_days_before || null, status || 'active'
+        ]
       );
       return res.status(201).json(mapTransactionRow(result.rows[0]));
     } catch (insertErr) {
@@ -165,7 +190,12 @@ router.put('/:id', async (req, res) => {
     const { rows: existingRows } = await query('SELECT * FROM transactions WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
     if (existingRows.length === 0) return res.status(404).json({ error: "Transaction not found" });
 
-    const { type, amount, category_id, subcategory_id, subcategoryId, account_id, to_account_id, date, note, photo, is_recurring, repeat_frequency } = req.body;
+    const { 
+      type, amount, category_id, subcategory_id, subcategoryId, account_id, to_account_id, 
+      title, date, note, photo, is_recurring, repeat_frequency,
+      repeat_interval, repeat_day_of_month, repeat_end_type, repeat_occurrences_total,
+      auto_create, reminder_days_before, status, next_due_date
+    } = req.body;
     const subcatId = subcategory_id || subcategoryId || null;
 
     let photoUrl = photo !== undefined ? photo : existingRows[0].photo;
@@ -174,25 +204,55 @@ router.put('/:id', async (req, res) => {
       if (existingRows[0].photo) await deleteImage(existingRows[0].photo);
     }
 
+    let calculatedNextDue = next_due_date !== undefined ? next_due_date : existingRows[0].next_due_date;
+    if (is_recurring && !calculatedNextDue && existingRows[0].is_recurring !== is_recurring) {
+      const d = new Date(date);
+      if (repeat_frequency === 'daily' || repeat_frequency === 'days') d.setDate(d.getDate() + (repeat_interval || 1));
+      else if (repeat_frequency === 'weekly' || repeat_frequency === 'weeks') d.setDate(d.getDate() + 7 * (repeat_interval || 1));
+      else if (repeat_frequency === 'monthly' || repeat_frequency === 'months') d.setMonth(d.getMonth() + (repeat_interval || 1));
+      else if (repeat_frequency === 'quarterly') d.setMonth(d.getMonth() + 3);
+      else if (repeat_frequency === 'yearly' || repeat_frequency === 'years') d.setFullYear(d.getFullYear() + (repeat_interval || 1));
+      calculatedNextDue = d.toISOString();
+    }
+
     try {
       const result = await query(
         `UPDATE transactions 
-         SET type = $1, amount = $2, category_id = $3, subcategory_id = $4, account_id = $5, to_account_id = $6, note = $7, date = $8, photo = $9, is_recurring = $10, repeat_frequency = $11
-         WHERE id = $12 AND user_id = $13 RETURNING *`,
-        [type || 'expense', amount, category_id || null, subcatId, account_id || null, to_account_id || null, note || '', date, photoUrl, is_recurring || false, repeat_frequency || null, req.params.id, req.userId]
+         SET type = $1, amount = $2, category_id = $3, subcategory_id = $4, account_id = $5, to_account_id = $6, title = $7, note = $8, date = $9, photo = $10, is_recurring = $11, repeat_frequency = $12,
+             repeat_interval = $13, repeat_day_of_month = $14, next_due_date = $15, repeat_end_type = $16, repeat_occurrences_total = $17, auto_create = $18, reminder_days_before = $19, status = $20
+         WHERE id = $21 AND user_id = $22 RETURNING *`,
+        [
+          type || existingRows[0].type, amount !== undefined ? amount : existingRows[0].amount, 
+          category_id !== undefined ? category_id : existingRows[0].category_id, 
+          subcatId !== undefined ? subcatId : existingRows[0].subcategory_id, 
+          account_id !== undefined ? account_id : existingRows[0].account_id, 
+          to_account_id !== undefined ? to_account_id : existingRows[0].to_account_id, 
+          title !== undefined ? title : existingRows[0].title,
+          note !== undefined ? note : existingRows[0].note, 
+          date || existingRows[0].date, photoUrl, 
+          is_recurring !== undefined ? is_recurring : existingRows[0].is_recurring, 
+          repeat_frequency !== undefined ? repeat_frequency : existingRows[0].repeat_frequency,
+          repeat_interval !== undefined ? repeat_interval : existingRows[0].repeat_interval,
+          repeat_day_of_month !== undefined ? repeat_day_of_month : existingRows[0].repeat_day_of_month,
+          calculatedNextDue,
+          repeat_end_type !== undefined ? repeat_end_type : existingRows[0].repeat_end_type,
+          repeat_occurrences_total !== undefined ? repeat_occurrences_total : existingRows[0].repeat_occurrences_total,
+          auto_create !== undefined ? auto_create : existingRows[0].auto_create,
+          reminder_days_before !== undefined ? reminder_days_before : existingRows[0].reminder_days_before,
+          status !== undefined ? status : existingRows[0].status,
+          req.params.id, req.userId
+        ]
       );
-      return res.json(mapTransactionRow(result.rows[0]));
+      res.json(mapTransactionRow(result.rows[0]));
     } catch (updateErr) {
-      // Fallback for old schema
+      console.error('Update attempt 1 failed:', updateErr.message);
       const result = await query(
-        `UPDATE transactions SET type = $1, amount = $2, category_id = $3, account_id = $4, date = $5
-         WHERE id = $6 AND user_id = $7 RETURNING *`,
-        [type || 'expense', amount, category_id || null, account_id || null, date, req.params.id, req.userId]
+        `UPDATE transactions SET type = $1, amount = $2, category_id = $3, account_id = $4, date = $5 WHERE id = $6 AND user_id = $7 RETURNING *`,
+        [type || existingRows[0].type, amount !== undefined ? amount : existingRows[0].amount, category_id !== undefined ? category_id : existingRows[0].category_id, account_id !== undefined ? account_id : existingRows[0].account_id, date || existingRows[0].date, req.params.id, req.userId]
       );
-      return res.json(mapTransactionRow(result.rows[0]));
+      res.json(mapTransactionRow(result.rows[0]));
     }
   } catch (err) {
-    console.error('Update transaction error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -200,12 +260,9 @@ router.put('/:id', async (req, res) => {
 // Delete transaction
 router.delete('/:id', async (req, res) => {
   try {
-    const { rows: existingRows } = await query('SELECT * FROM transactions WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
-    if (existingRows.length === 0) return res.status(404).json({ error: "Transaction not found" });
-
-    await query('DELETE FROM transactions WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
-    if (existingRows[0].photo) await deleteImage(existingRows[0].photo);
-
+    const result = await query('DELETE FROM transactions WHERE id = $1 AND user_id = $2 RETURNING *', [req.params.id, req.userId]);
+    if (result.rows.length === 0) return res.status(404).json({ error: "Transaction not found" });
+    if (result.rows[0].photo) await deleteImage(result.rows[0].photo);
     res.json({ message: "Success" });
   } catch (err) {
     res.status(500).json({ error: err.message });
