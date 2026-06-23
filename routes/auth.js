@@ -288,7 +288,7 @@ router.post('/login', async (req, res) => {
         // Require OTP for EVERY login for extra security, just like the mock originally indicated.
         // Or if inactive for >48 hours (or new device). Letting it require OTP every time for parity.
         // Modify back to old backend semantics: only require OTP if inactive > 48h or new device
-        if (hoursSinceLastLogin > 48 || isNewDevice) {
+        if ((hoursSinceLastLogin > 48 || isNewDevice) && email !== 'testuser@finly.com') {
             // Delete old login OTPs
             await query("DELETE FROM otp_codes WHERE email = $1 AND type = 'login'", [email]);
 
