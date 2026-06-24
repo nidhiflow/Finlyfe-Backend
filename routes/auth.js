@@ -154,7 +154,7 @@ router.post('/verify-otp', async (req, res) => {
 
         res.status(201).json({
             token,
-            user: { id: userId, name: otp.name, email },
+            user: { id: userId, name: otp.name, email, subscription_tier: 'Free' },
         });
     } catch (err) {
         console.error('Verify OTP error:', err);
@@ -232,7 +232,7 @@ router.post('/login', async (req, res) => {
             }
             const demo = demoRows[0];
             const token = jwt.sign({ id: demo.id }, JWT_SECRET, { expiresIn: '30d' });
-            return res.json({ token, user: { id: demo.id, name: demo.name, email: demo.email } });
+            return res.json({ token, user: { id: demo.id, name: demo.name, email: demo.email, subscription_tier: demo.subscription_tier || 'Free' } });
         }
         // ────────────────────────────────────────────────────────────────────
 
@@ -250,7 +250,7 @@ router.post('/login', async (req, res) => {
             }
             const admin = adminRows[0];
             const token = jwt.sign({ id: admin.id, isAdmin: true }, JWT_SECRET, { expiresIn: '30d' });
-            return res.json({ token, user: { id: admin.id, name: admin.name, email: admin.email, isAdmin: true } });
+            return res.json({ token, user: { id: admin.id, name: admin.name, email: admin.email, isAdmin: true, subscription_tier: admin.subscription_tier || 'Premium' } });
         }
         // ────────────────────────────────────────────────────────────────────
 
@@ -317,7 +317,7 @@ router.post('/login', async (req, res) => {
 
         res.json({
             token,
-            user: { id: user.id, name: user.name, email: user.email },
+            user: { id: user.id, name: user.name, email: user.email, subscription_tier: user.subscription_tier || 'Free' },
         });
     } catch (err) {
         console.error('Login error:', err);
@@ -381,7 +381,7 @@ router.post('/verify-login-otp', async (req, res) => {
 
         res.json({
             token,
-            user: { id: user.id, name: user.name, email: user.email },
+            user: { id: user.id, name: user.name, email: user.email, subscription_tier: user.subscription_tier || 'Free' },
         });
     } catch (err) {
         console.error('Verify login OTP error:', err);
@@ -473,7 +473,7 @@ router.post('/reset-password', async (req, res) => {
 // GET /api/auth/me
 router.get('/me', authenticateToken, async (req, res) => {
     try {
-        const { rows } = await query('SELECT id, name, email, subscription_tier, created_at FROM users WHERE id = $1', [req.userId]);
+        const { rows } = await query('SELECT id, name, email, phone, photo, subscription_tier, created_at FROM users WHERE id = $1', [req.userId]);
         if (rows.length === 0) {
             return res.status(404).json({ error: 'User not found' });
         }
@@ -569,7 +569,7 @@ router.put('/profile', authenticateToken, async (req, res) => {
 
         // Update user
         const { rows: updated } = await query(
-            'UPDATE users SET name = $1, email = COALESCE($2, email), phone = COALESCE($3, phone), photo = COALESCE($4, photo) WHERE id = $5 RETURNING id, name, email, phone, photo, email_verified, created_at',
+            'UPDATE users SET name = $1, email = COALESCE($2, email), phone = COALESCE($3, phone), photo = COALESCE($4, photo) WHERE id = $5 RETURNING id, name, email, phone, photo, subscription_tier, email_verified, created_at',
             [name, email?.toLowerCase() || null, phone || null, photo || null, userId]
         );
 
@@ -610,6 +610,27 @@ router.delete('/account', authenticateToken, async (req, res) => {
         res.json({ message: 'Account deleted successfully' });
     } catch (err) {
         console.error('Delete account error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// POST /api/auth/upgrade-subscription — Upgrade user's subscription tier
+router.post('/upgrade-subscription', authenticateToken, async (req, res) => {
+    try {
+        const { tier } = req.body;
+        if (!['Pro', 'Premium'].includes(tier)) {
+            return res.status(400).json({ error: 'Invalid subscription tier' });
+        }
+        const { rows: updated } = await query(
+            'UPDATE users SET subscription_tier = $1 WHERE id = $2 RETURNING id, name, email, phone, photo, subscription_tier, email_verified, created_at',
+            [tier, req.userId]
+        );
+        if (updated.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        res.json({ message: `Successfully upgraded to ${tier}!`, user: updated[0] });
+    } catch (err) {
+        console.error('Upgrade subscription error:', err);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
