@@ -1,105 +1,68 @@
 import express from 'express';
-import { query, isSavings } from '../db/index.js';
+import { query } from '../db/index.js';
 import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
 router.use(authenticateToken);
 
+// SQL predicate mirroring isSavings() from db/index.js (catId/categoryName/note containing "saving" or "invest")
+const IS_SAVING_SQL = `(
+  LOWER(COALESCE(t.category_id, '')) LIKE '%saving%' OR LOWER(COALESCE(t.category_id, '')) LIKE '%invest%' OR
+  LOWER(COALESCE(c.name, '')) LIKE '%saving%' OR LOWER(COALESCE(c.name, '')) LIKE '%invest%' OR
+  LOWER(COALESCE(t.note, '')) LIKE '%saving%' OR LOWER(COALESCE(t.note, '')) LIKE '%invest%'
+)`;
+
+// Computes each account's running balance (opening balance + income/expense/transfer deltas) in one
+// grouped SQL query instead of pulling every transaction into Node and looping per account.
+function buildBalancesSql(singleAccount) {
+  return `
+    SELECT a.*, (a.balance + COALESCE(adj.adjustment, 0)) AS balance
+    FROM accounts a
+    LEFT JOIN (
+      SELECT account_id, SUM(delta) AS adjustment
+      FROM (
+        SELECT t.account_id AS account_id, t.amount AS delta
+        FROM transactions t
+        LEFT JOIN categories c ON t.category_id = c.id
+        WHERE t.user_id = $1 AND t.type = 'income' AND t.account_id IS NOT NULL
+
+        UNION ALL
+
+        SELECT t.account_id AS account_id, -t.amount AS delta
+        FROM transactions t
+        LEFT JOIN categories c ON t.category_id = c.id
+        WHERE t.user_id = $1 AND t.type = 'expense' AND t.account_id IS NOT NULL
+          AND NOT ${IS_SAVING_SQL}
+
+        UNION ALL
+
+        SELECT t.account_id AS account_id, -t.amount AS delta
+        FROM transactions t
+        WHERE t.user_id = $1 AND t.type = 'transfer' AND t.account_id IS NOT NULL
+
+        UNION ALL
+
+        SELECT t.to_account_id AS account_id, t.amount AS delta
+        FROM transactions t
+        WHERE t.user_id = $1 AND t.type = 'transfer' AND t.to_account_id IS NOT NULL
+      ) deltas
+      GROUP BY account_id
+    ) adj ON adj.account_id = a.id
+    WHERE a.user_id = $1${singleAccount ? ' AND a.id = $2' : ''}
+    ORDER BY a.created_at ASC
+  `;
+}
+
 async function getAccountWithBalance(userId, accountId) {
-  const accountsRes = await query('SELECT * FROM accounts WHERE user_id = $1 AND id = $2', [userId, accountId]);
-  if (accountsRes.rows.length === 0) return null;
-  const acc = accountsRes.rows[0];
-
-  const transactionsRes = await query(`
-    SELECT t.*, c.name as category_name 
-    FROM transactions t 
-    LEFT JOIN categories c ON t.category_id = c.id 
-    WHERE t.user_id = $1 AND (t.account_id = $2 OR t.to_account_id = $2)
-  `, [userId, accountId]);
-  const transactions = transactionsRes.rows;
-
-  let balanceAdjustment = 0;
-  for (const t of transactions) {
-    const amt = parseFloat(t.amount || 0);
-    const isSaving = isSavings(t.category_id, t.category_name, t.note);
-
-    if (t.type === 'income') {
-      if (t.account_id === accountId) {
-        balanceAdjustment += amt;
-      }
-    } else if (t.type === 'expense') {
-      if (!isSaving) {
-        if (t.account_id === accountId) {
-          balanceAdjustment -= amt;
-        }
-      }
-    } else if (t.type === 'transfer') {
-      if (t.account_id === accountId) {
-        balanceAdjustment -= amt;
-      }
-      if (t.to_account_id === accountId) {
-        balanceAdjustment += amt;
-      }
-    }
-  }
-
-  const initialBal = parseFloat(acc.balance || 0);
-  return {
-    ...acc,
-    balance: initialBal + balanceAdjustment
-  };
+  const result = await query(buildBalancesSql(true), [userId, accountId]);
+  if (result.rows.length === 0) return null;
+  return { ...result.rows[0], balance: parseFloat(result.rows[0].balance) };
 }
 
 async function getAccountsWithBalances(userId) {
-  const accountsRes = await query('SELECT * FROM accounts WHERE user_id = $1 ORDER BY created_at ASC', [userId]);
-  const accounts = accountsRes.rows;
-
-  const transactionsRes = await query(`
-    SELECT t.*, c.name as category_name 
-    FROM transactions t 
-    LEFT JOIN categories c ON t.category_id = c.id 
-    WHERE t.user_id = $1
-  `, [userId]);
-  const transactions = transactionsRes.rows;
-
-  const balanceAdjustments = {};
-  for (const acc of accounts) {
-    balanceAdjustments[acc.id] = 0;
-  }
-
-  for (const t of transactions) {
-    const amt = parseFloat(t.amount || 0);
-    const isSaving = isSavings(t.category_id, t.category_name, t.note);
-
-    if (t.type === 'income') {
-      if (t.account_id && balanceAdjustments[t.account_id] !== undefined) {
-        balanceAdjustments[t.account_id] += amt;
-      }
-    } else if (t.type === 'expense') {
-      if (!isSaving) {
-        if (t.account_id && balanceAdjustments[t.account_id] !== undefined) {
-          balanceAdjustments[t.account_id] -= amt;
-        }
-      }
-    } else if (t.type === 'transfer') {
-      if (t.account_id && balanceAdjustments[t.account_id] !== undefined) {
-        balanceAdjustments[t.account_id] -= amt;
-      }
-      if (t.to_account_id && balanceAdjustments[t.to_account_id] !== undefined) {
-        balanceAdjustments[t.to_account_id] += amt;
-      }
-    }
-  }
-
-  return accounts.map(acc => {
-    const initialBal = parseFloat(acc.balance || 0);
-    const adj = balanceAdjustments[acc.id] || 0;
-    return {
-      ...acc,
-      balance: initialBal + adj
-    };
-  });
+  const result = await query(buildBalancesSql(false), [userId]);
+  return result.rows.map(row => ({ ...row, balance: parseFloat(row.balance) }));
 }
 
 // Get all accounts

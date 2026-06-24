@@ -21,6 +21,7 @@ export async function syncSchema() {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT false;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_tier TEXT DEFAULT 'Free';
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT false;
 
       -- Accounts table
       CREATE TABLE IF NOT EXISTS accounts (
@@ -171,6 +172,13 @@ export async function syncSchema() {
       CREATE INDEX IF NOT EXISTS idx_page_analytics_page ON page_analytics(page);
       CREATE INDEX IF NOT EXISTS idx_page_analytics_user_id ON page_analytics(user_id);
       CREATE INDEX IF NOT EXISTS idx_page_analytics_visited_at ON page_analytics(visited_at);
+
+      -- Composite indexes for common filter/aggregate query shapes (user_id + date range, user_id + category, account lookups)
+      CREATE INDEX IF NOT EXISTS idx_transactions_user_date ON transactions(user_id, date DESC);
+      CREATE INDEX IF NOT EXISTS idx_transactions_user_category ON transactions(user_id, category_id);
+      CREATE INDEX IF NOT EXISTS idx_transactions_user_type_date ON transactions(user_id, type, date);
+      CREATE INDEX IF NOT EXISTS idx_transactions_account_id ON transactions(account_id);
+      CREATE INDEX IF NOT EXISTS idx_transactions_to_account_id ON transactions(to_account_id);
 
       COMMIT;
     `;

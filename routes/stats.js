@@ -6,54 +6,39 @@ const router = express.Router();
 
 router.use(authenticateToken);
 
+// SQL predicate mirroring isSavings() from db/index.js (catId/categoryName/note containing "saving" or "invest")
+const IS_SAVING_SQL = `(
+  LOWER(COALESCE(t.category_id, '')) LIKE '%saving%' OR LOWER(COALESCE(t.category_id, '')) LIKE '%invest%' OR
+  LOWER(COALESCE(c.name, '')) LIKE '%saving%' OR LOWER(COALESCE(c.name, '')) LIKE '%invest%' OR
+  LOWER(COALESCE(t.note, '')) LIKE '%saving%' OR LOWER(COALESCE(t.note, '')) LIKE '%invest%'
+)`;
+
 // Get summary
 router.get('/summary', async (req, res) => {
   try {
     const { month } = req.query;
-    let sql, params;
+    let sql = `SELECT
+                 COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS income,
+                 COALESCE(SUM(CASE WHEN t.type = 'expense' AND NOT ${IS_SAVING_SQL} THEN t.amount ELSE 0 END), 0) AS expense,
+                 COALESCE(SUM(CASE WHEN t.type = 'expense' AND ${IS_SAVING_SQL} THEN t.amount ELSE 0 END), 0) AS savings
+               FROM transactions t
+               LEFT JOIN categories c ON t.category_id = c.id
+               WHERE t.user_id = $1`;
+    const params = [req.userId];
 
     if (month) {
-      sql = `SELECT t.*, c.name as category_name 
-             FROM transactions t 
-             LEFT JOIN categories c ON t.category_id = c.id 
-             WHERE t.user_id = $1 AND LEFT(t.date, 7) = $2`;
-      params = [req.userId, month];
-    } else {
-      sql = `SELECT t.*, c.name as category_name 
-             FROM transactions t 
-             LEFT JOIN categories c ON t.category_id = c.id 
-             WHERE t.user_id = $1`;
-      params = [req.userId];
+      sql += ` AND LEFT(t.date, 7) = $2`;
+      params.push(month);
     }
 
     const result = await query(sql, params);
-    
-    let income = 0;
-    let expense = 0;
-    let savings = 0;
+    const row = result.rows[0];
 
-    for (const row of result.rows) {
-      const amt = parseFloat(row.amount || 0);
-      const catId = row.category_id;
-      const catName = row.category_name;
-      const note = row.note;
-      const type = row.type;
-
-      const isSaving = isSavings(catId, catName, note);
-
-      if (type === 'income') {
-        income += amt;
-      } else if (type === 'expense') {
-        if (isSaving) {
-          savings += amt;
-        } else {
-          expense += amt;
-        }
-      }
-    }
-
+    const income = parseFloat(row.income);
+    const expense = parseFloat(row.expense);
+    const savings = parseFloat(row.savings);
     const balance = income - expense;
-    
+
     res.json({
       income,
       expense,
@@ -70,44 +55,25 @@ router.get('/summary', async (req, res) => {
 router.get('/finly-score', async (req, res) => {
   try {
     const { month } = req.query;
-    let sql, params;
+    let sql = `SELECT
+                 COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS income,
+                 COALESCE(SUM(CASE WHEN t.type = 'expense' AND NOT ${IS_SAVING_SQL} THEN t.amount ELSE 0 END), 0) AS expense,
+                 COUNT(*) AS tx_count
+               FROM transactions t
+               LEFT JOIN categories c ON t.category_id = c.id
+               WHERE t.user_id = $1`;
+    const params = [req.userId];
     if (month) {
-      sql = `SELECT t.*, c.name as category_name
-             FROM transactions t
-             LEFT JOIN categories c ON t.category_id = c.id
-             WHERE t.user_id = $1 AND LEFT(t.date, 7) = $2`;
-      params = [req.userId, month];
-    } else {
-      sql = `SELECT t.*, c.name as category_name
-             FROM transactions t
-             LEFT JOIN categories c ON t.category_id = c.id
-             WHERE t.user_id = $1`;
-      params = [req.userId];
+      sql += ` AND LEFT(t.date, 7) = $2`;
+      params.push(month);
     }
 
     const result = await query(sql, params);
-    
-    let incomeNum = 0;
-    let expenseNum = 0;
-    const txCount = result.rows.length;
+    const row = result.rows[0];
 
-    for (const row of result.rows) {
-      const amt = parseFloat(row.amount || 0);
-      const catId = row.category_id;
-      const catName = row.category_name;
-      const note = row.note;
-      const type = row.type;
-
-      const isSaving = isSavings(catId, catName, note);
-
-      if (type === 'income') {
-        incomeNum += amt;
-      } else if (type === 'expense') {
-        if (!isSaving) {
-          expenseNum += amt;
-        }
-      }
-    }
+    const incomeNum = parseFloat(row.income);
+    const expenseNum = parseFloat(row.expense);
+    const txCount = parseInt(row.tx_count, 10);
 
     let score = 0;
     if (incomeNum > 0) {

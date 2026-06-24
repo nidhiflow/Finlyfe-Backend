@@ -548,6 +548,42 @@ router.put('/password', authenticateToken, async (req, res) => {
     }
 });
 
+// PUT /api/auth/profile — Update user profile details
+router.put('/profile', authenticateToken, async (req, res) => {
+    try {
+        const { name, email, phone } = req.body;
+        const userId = req.userId;
+
+        if (!name) {
+            return res.status(400).json({ error: 'Name is required' });
+        }
+
+        // If updating email, check if it's already taken by someone else
+        if (email) {
+            const emailLower = email.toLowerCase();
+            const { rows: existing } = await query('SELECT id FROM users WHERE email = $1 AND id != $2', [emailLower, userId]);
+            if (existing.length > 0) {
+                return res.status(409).json({ error: 'Email is already in use by another account' });
+            }
+        }
+
+        // Update user
+        const { rows: updated } = await query(
+            'UPDATE users SET name = $1, email = COALESCE($2, email), phone = COALESCE($3, phone) WHERE id = $4 RETURNING id, name, email, phone, email_verified, created_at',
+            [name, email?.toLowerCase() || null, phone || null, userId]
+        );
+
+        if (updated.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        res.json({ message: 'Profile updated successfully', user: updated[0] });
+    } catch (err) {
+        console.error('Update profile error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 // DELETE /api/auth/account — Delete user account and all data
 router.delete('/account', authenticateToken, async (req, res) => {
     try {
