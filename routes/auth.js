@@ -551,7 +551,7 @@ router.put('/password', authenticateToken, async (req, res) => {
 // PUT /api/auth/profile — Update user profile details
 router.put('/profile', authenticateToken, async (req, res) => {
     try {
-        const { name, email, phone } = req.body;
+        const { name, email, phone, photo } = req.body;
         const userId = req.userId;
 
         if (!name) {
@@ -569,8 +569,8 @@ router.put('/profile', authenticateToken, async (req, res) => {
 
         // Update user
         const { rows: updated } = await query(
-            'UPDATE users SET name = $1, email = COALESCE($2, email), phone = COALESCE($3, phone) WHERE id = $4 RETURNING id, name, email, phone, email_verified, created_at',
-            [name, email?.toLowerCase() || null, phone || null, userId]
+            'UPDATE users SET name = $1, email = COALESCE($2, email), phone = COALESCE($3, phone), photo = COALESCE($4, photo) WHERE id = $5 RETURNING id, name, email, phone, photo, email_verified, created_at',
+            [name, email?.toLowerCase() || null, phone || null, photo || null, userId]
         );
 
         if (updated.length === 0) {

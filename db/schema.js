@@ -15,11 +15,13 @@ export async function syncSchema() {
         password TEXT NOT NULL,
         email_verified BOOLEAN DEFAULT false,
         phone TEXT,
+        photo TEXT,
         subscription_tier TEXT DEFAULT 'Free',
         created_at TIMESTAMP DEFAULT NOW()
       );
       ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT false;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS photo TEXT;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_tier TEXT DEFAULT 'Free';
       ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT false;
 
