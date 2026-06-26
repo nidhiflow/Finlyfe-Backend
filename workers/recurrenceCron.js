@@ -1,76 +1,94 @@
 import cron from 'node-cron';
 import { query } from '../db/index.js';
 
-export function initRecurrenceCron() {
-  // Run every hour. For production, usually runs daily at midnight e.g., '0 0 * * *'
-  // But running hourly or even minutely in development is helpful for testing.
-  cron.schedule('0 * * * *', async () => {
-    console.log('[CRON] Running recurrence worker at', new Date().toISOString());
-    try {
-      // Find active templates that are due today or earlier
-      const { rows: templates } = await query(`
-        SELECT * FROM transactions 
-        WHERE is_recurring = true 
-          AND status = 'active'
-          AND auto_create = true
-          AND next_due_date IS NOT NULL
-          AND next_due_date <= $1
-      `, [new Date().toISOString()]);
+function computeNextDue(currentDue, frequency, interval) {
+  const d = new Date(currentDue);
+  const step = interval || 1;
+  if (frequency === 'daily' || frequency === 'days') d.setDate(d.getDate() + step);
+  else if (frequency === 'weekly' || frequency === 'weeks') d.setDate(d.getDate() + 7 * step);
+  else if (frequency === 'monthly' || frequency === 'months') d.setMonth(d.getMonth() + step);
+  else if (frequency === 'quarterly') d.setMonth(d.getMonth() + 3);
+  else if (frequency === 'yearly' || frequency === 'years') d.setFullYear(d.getFullYear() + step);
+  return d;
+}
 
-      console.log(`[CRON] Found ${templates.length} recurring transactions due.`);
+// Processes every active recurring template, creating one child transaction per
+// occurrence missed so far and looping until it's caught up to the present —
+// this matters because the host process can sleep/restart between cron ticks,
+// so a single template may have several occurrences due by the time we run.
+export async function processRecurringTransactions() {
+  console.log('[CRON] Running recurrence worker at', new Date().toISOString());
+  try {
+    const now = new Date();
+    const { rows: templates } = await query(`
+      SELECT * FROM transactions
+      WHERE is_recurring = true
+        AND status = 'active'
+        AND auto_create = true
+        AND next_due_date IS NOT NULL
+        AND next_due_date <= $1
+    `, [now.toISOString()]);
 
-      for (const t of templates) {
-        try {
-          // Generate new transaction ID
-          const newTxId = Date.now().toString() + Math.floor(Math.random() * 1000);
-          const currentDue = t.next_due_date;
+    console.log(`[CRON] Found ${templates.length} recurring transactions due.`);
 
-          // 1. Insert child transaction
+    for (const t of templates) {
+      try {
+        let currentDue = t.next_due_date;
+        let occurrencesCreated = 0;
+        let nextStatus = t.status;
+        let nextCount = t.repeat_occurrences_current || 0;
+
+        while (new Date(currentDue) <= now && nextStatus === 'active') {
+          const newTxId = Date.now().toString() + Math.floor(Math.random() * 1000) + occurrencesCreated;
+
           await query(`
             INSERT INTO transactions (
-              id, user_id, type, amount, category_id, subcategory_id, account_id, to_account_id, 
+              id, user_id, type, amount, category_id, subcategory_id, account_id, to_account_id,
               title, note, date, photo, is_recurring, repeat_group_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false, $13)
           `, [
             newTxId, t.user_id, t.type, t.amount, t.category_id, t.subcategory_id, t.account_id, t.to_account_id,
-            t.title, t.note, currentDue, t.photo, t.id // Link child to parent via repeat_group_id
+            t.title, t.note, currentDue, t.photo, t.id
           ]);
+          occurrencesCreated++;
 
-          // 2. Calculate next due date
-          const d = new Date(currentDue);
-          const interval = t.repeat_interval || 1;
-          if (t.repeat_frequency === 'daily' || t.repeat_frequency === 'days') d.setDate(d.getDate() + interval);
-          else if (t.repeat_frequency === 'weekly' || t.repeat_frequency === 'weeks') d.setDate(d.getDate() + 7 * interval);
-          else if (t.repeat_frequency === 'monthly' || t.repeat_frequency === 'months') d.setMonth(d.getMonth() + interval);
-          else if (t.repeat_frequency === 'quarterly') d.setMonth(d.getMonth() + 3);
-          else if (t.repeat_frequency === 'yearly' || t.repeat_frequency === 'years') d.setFullYear(d.getFullYear() + interval);
-          
-          const nextDue = d.toISOString();
-          const nextCount = (t.repeat_occurrences_current || 0) + 1;
-          
-          // 3. Determine if completed
-          let newStatus = t.status;
+          const nextDueDate = computeNextDue(currentDue, t.repeat_frequency, t.repeat_interval);
+          const nextDue = nextDueDate.toISOString();
+          nextCount += 1;
+
           if (t.repeat_end_type === 'on_date' && t.repeat_end_date && nextDue > t.repeat_end_date) {
-            newStatus = 'completed';
+            nextStatus = 'completed';
           } else if (t.repeat_end_type === 'after_n' && t.repeat_occurrences_total && nextCount >= t.repeat_occurrences_total) {
-            newStatus = 'completed';
+            nextStatus = 'completed';
           }
 
-          // 4. Update parent
-          await query(`
-            UPDATE transactions 
-            SET next_due_date = $1, repeat_occurrences_current = $2, status = $3
-            WHERE id = $4
-          `, [nextDue, nextCount, newStatus, t.id]);
-
-          console.log(`[CRON] Processed child Tx ${newTxId} for template ${t.id}. Next due: ${nextDue}. Status: ${newStatus}`);
-
-        } catch (innerErr) {
-          console.error(`[CRON] Failed to process template ${t.id}:`, innerErr);
+          currentDue = nextDue;
         }
+
+        await query(`
+          UPDATE transactions
+          SET next_due_date = $1, repeat_occurrences_current = $2, status = $3
+          WHERE id = $4
+        `, [currentDue, nextCount, nextStatus, t.id]);
+
+        console.log(`[CRON] Template ${t.id}: created ${occurrencesCreated} occurrence(s), caught up to next due ${currentDue}, status: ${nextStatus}`);
+      } catch (innerErr) {
+        console.error(`[CRON] Failed to process template ${t.id}:`, innerErr);
       }
-    } catch (err) {
-      console.error('[CRON] Recurrence worker error:', err);
     }
+  } catch (err) {
+    console.error('[CRON] Recurrence worker error:', err);
+  }
+}
+
+export function initRecurrenceCron() {
+  // Run immediately on boot so a cold start / wake-up from sleep catches up
+  // right away instead of waiting for the next scheduled tick.
+  processRecurringTransactions();
+
+  // Then keep checking every 15 minutes — finer-grained than hourly so a
+  // process that's only briefly awake still has a good chance of catching it.
+  cron.schedule('*/15 * * * *', () => {
+    processRecurringTransactions();
   });
 }
