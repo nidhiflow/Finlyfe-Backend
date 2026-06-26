@@ -35,8 +35,8 @@ router.get('/', async (req, res) => {
     // Add created_at column if missing (old tables don't have it)
     try { await query(`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()`); } catch(e) {}
 
-    let sql = `SELECT id, category_id, amount, period FROM budgets WHERE user_id = $1`;
     const params = [req.userId];
+    let sql = `SELECT id, category_id, amount, period FROM budgets WHERE user_id = $1`;
     if (month) {
       sql += ` AND (period = $2 OR period IS NULL)`;
       params.push(month);
@@ -44,7 +44,21 @@ router.get('/', async (req, res) => {
     sql += ` ORDER BY id ASC`;
 
     const result = await query(sql, params);
-    res.json({ categories: result.rows });
+
+    // Compute actual spend per category for the displayed month from transactions
+    const spendMonth = month || null;
+    const withSpent = await Promise.all(result.rows.map(async (b) => {
+      const targetMonth = spendMonth || b.period;
+      if (!b.category_id || !targetMonth) return { ...b, spent: 0 };
+      const spendResult = await query(
+        `SELECT COALESCE(SUM(amount), 0) AS spent FROM transactions
+         WHERE user_id = $1 AND category_id = $2 AND type = 'expense' AND LEFT(date, 7) = $3`,
+        [req.userId, b.category_id, targetMonth]
+      );
+      return { ...b, spent: spendResult.rows[0].spent };
+    }));
+
+    res.json({ categories: withSpent });
   } catch (err) {
     console.error('Get budgets error:', err);
     res.status(500).json({ error: err.message });
