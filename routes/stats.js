@@ -16,7 +16,7 @@ const IS_SAVING_SQL = `(
 // Get summary
 router.get('/summary', async (req, res) => {
   try {
-    const { month } = req.query;
+    const { month, startDate, endDate } = req.query;
     let sql = `SELECT
                  COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS income,
                  COALESCE(SUM(CASE WHEN t.type = 'expense' AND NOT ${IS_SAVING_SQL} THEN t.amount ELSE 0 END), 0) AS expense,
@@ -25,9 +25,13 @@ router.get('/summary', async (req, res) => {
                LEFT JOIN categories c ON t.category_id = c.id
                WHERE t.user_id = $1`;
     const params = [req.userId];
+    let idx = 2;
 
-    if (month) {
-      sql += ` AND LEFT(t.date, 7) = $2`;
+    if (startDate || endDate) {
+      if (startDate) { sql += ` AND t.date >= $${idx++}`; params.push(startDate); }
+      if (endDate) { sql += ` AND t.date <= $${idx++}`; params.push(endDate); }
+    } else if (month) {
+      sql += ` AND LEFT(t.date, 7) = $${idx++}`;
       params.push(month);
     }
 
@@ -54,7 +58,7 @@ router.get('/summary', async (req, res) => {
 // Get finly score (0-100 scale)
 router.get('/finly-score', async (req, res) => {
   try {
-    const { month } = req.query;
+    const { month, startDate, endDate } = req.query;
     let sql = `SELECT
                  COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS income,
                  COALESCE(SUM(CASE WHEN t.type = 'expense' AND NOT ${IS_SAVING_SQL} THEN t.amount ELSE 0 END), 0) AS expense,
@@ -63,8 +67,12 @@ router.get('/finly-score', async (req, res) => {
                LEFT JOIN categories c ON t.category_id = c.id
                WHERE t.user_id = $1`;
     const params = [req.userId];
-    if (month) {
-      sql += ` AND LEFT(t.date, 7) = $2`;
+    let idx = 2;
+    if (startDate || endDate) {
+      if (startDate) { sql += ` AND t.date >= $${idx++}`; params.push(startDate); }
+      if (endDate) { sql += ` AND t.date <= $${idx++}`; params.push(endDate); }
+    } else if (month) {
+      sql += ` AND LEFT(t.date, 7) = $${idx++}`;
       params.push(month);
     }
 
@@ -104,7 +112,7 @@ router.get('/finly-score', async (req, res) => {
 
 // Category breakdown
 router.get('/category-breakdown', async (req, res) => {
-  const { month } = req.query;
+  const { month, startDate, endDate } = req.query;
   try {
     let sql = `SELECT t.category_id, t.type, SUM(t.amount) as total, c.name as category_name, c.icon, c.color
        FROM transactions t
@@ -113,7 +121,10 @@ router.get('/category-breakdown', async (req, res) => {
     const params = [req.userId];
     let idx = 2;
 
-    if (month) {
+    if (startDate || endDate) {
+      if (startDate) { sql += ` AND t.date >= $${idx++}`; params.push(startDate); }
+      if (endDate) { sql += ` AND t.date <= $${idx++}`; params.push(endDate); }
+    } else if (month) {
       sql += ` AND LEFT(t.date, 7) = $${idx++}`;
       params.push(month);
     }
