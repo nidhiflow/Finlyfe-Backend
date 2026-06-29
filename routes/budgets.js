@@ -10,35 +10,10 @@ router.use(authenticateToken);
 router.get('/', async (req, res) => {
   const { month } = req.query; // format: 'YYYY-MM'
   try {
-    // Ensure budgets table exists without FK constraints
-    // First, try to drop all FK constraints on the table
-    try {
-      const fks = await query(`
-        SELECT constraint_name FROM information_schema.table_constraints 
-        WHERE table_name = 'budgets' AND constraint_type = 'FOREIGN KEY'
-      `);
-      for (const fk of fks.rows) {
-        await query(`ALTER TABLE budgets DROP CONSTRAINT IF EXISTS "${fk.constraint_name}"`);
-      }
-    } catch(e) { /* table might not exist yet */ }
-
-    await query(`
-      CREATE TABLE IF NOT EXISTS budgets (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        category_id TEXT,
-        amount NUMERIC NOT NULL DEFAULT 0,
-        period TEXT,
-        created_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
-    // Add created_at column if missing (old tables don't have it)
-    try { await query(`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()`); } catch(e) {}
-
     const params = [req.userId];
     let sql = `SELECT id, category_id, amount, period FROM budgets WHERE user_id = $1`;
     if (month) {
-      sql += ` AND (period = $2 OR period IS NULL)`;
+      sql += ` AND (period = $2 OR period IS NULL OR period = 'monthly')`;
       params.push(month);
     }
     sql += ` ORDER BY id ASC`;
@@ -67,29 +42,8 @@ router.get('/', async (req, res) => {
 
 // Save budgets (batch update or create)
 router.post('/', async (req, res) => {
-  const data = req.body; 
+  const data = req.body;
   try {
-    // Drop all FK constraints dynamically
-    try {
-      const fks = await query(`
-        SELECT constraint_name FROM information_schema.table_constraints 
-        WHERE table_name = 'budgets' AND constraint_type = 'FOREIGN KEY'
-      `);
-      for (const fk of fks.rows) {
-        await query(`ALTER TABLE budgets DROP CONSTRAINT IF EXISTS "${fk.constraint_name}"`);
-      }
-    } catch(e) {}
-    await query(`
-      CREATE TABLE IF NOT EXISTS budgets (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        category_id TEXT,
-        amount NUMERIC NOT NULL DEFAULT 0,
-        period TEXT,
-        created_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
-
     const budgets = Array.isArray(data) ? data : [data];
     for (const b of budgets) {
       const { category_id, amount, month } = b;

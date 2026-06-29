@@ -145,15 +145,6 @@ export async function syncSchema() {
         UNIQUE(user_id, device_hash)
       );
 
-      -- Bookmarks table
-      CREATE TABLE IF NOT EXISTS bookmarks (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
-        created_at TIMESTAMP DEFAULT NOW(),
-        UNIQUE(user_id, transaction_id)
-      );
-
       -- Page Analytics table (tracks which screens users visit)
       CREATE TABLE IF NOT EXISTS page_analytics (
         id TEXT PRIMARY KEY,
@@ -237,6 +228,23 @@ export async function syncSchema() {
     // Drop old budget constraints
     try {
       await client.query(`ALTER TABLE budgets DROP CONSTRAINT IF EXISTS budgets_user_id_category_id_month_key`);
+    } catch(e) { /* ignore */ }
+
+    // Drop FK constraints on budgets so frontend local category IDs don't cause insert errors
+    // (mirrors the same workaround already applied to transactions above)
+    try {
+      const { rows: budgetFks } = await client.query(`
+        SELECT constraint_name FROM information_schema.table_constraints
+        WHERE table_name = 'budgets' AND constraint_type = 'FOREIGN KEY'
+      `);
+      for (const fk of budgetFks) {
+        await client.query(`ALTER TABLE budgets DROP CONSTRAINT IF EXISTS "${fk.constraint_name}"`);
+      }
+    } catch(e) { /* ignore */ }
+
+    // Add created_at column if missing (old tables predate this column)
+    try {
+      await client.query(`ALTER TABLE budgets ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()`);
     } catch(e) { /* ignore */ }
 
     console.log("✅ Database schema synchronized successfully.");

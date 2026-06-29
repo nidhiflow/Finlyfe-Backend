@@ -54,11 +54,6 @@ app.use("/api/budgets", budgetsRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/admin", adminRoutes);
 
-// Mocks for Bookmarks to prevent fetch errors
-app.get("/api/bookmarks", (req, res) => res.json([]));
-app.post("/api/bookmarks", (req, res) => res.json({ message: "Bookmark saved" }));
-app.delete("/api/bookmarks/:id", (req, res) => res.json({ message: "Bookmark removed" }));
-
 // Start Server
 async function startServer() {
   try {
