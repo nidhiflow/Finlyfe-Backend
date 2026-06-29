@@ -128,7 +128,7 @@ router.delete('/:id', async (req, res) => {
   const { force } = req.query;
   try {
     if (force !== 'true') {
-      const txCheck = await query('SELECT count(*) FROM transactions WHERE account_id = $1', [id]);
+      const txCheck = await query('SELECT count(*) FROM transactions WHERE account_id = $1 AND user_id = $2', [id, req.userId]);
       if (parseInt(txCheck.rows[0].count) > 0) {
         return res.status(400).json({ error: "Account has linked transactions" });
       }
