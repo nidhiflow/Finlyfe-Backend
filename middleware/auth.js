@@ -1,5 +1,9 @@
 import jwt from 'jsonwebtoken';
 
+const JWT_SECRET_FALLBACK_ALLOWED = process.env.NODE_ENV !== 'production';
+if (!process.env.JWT_SECRET && !JWT_SECRET_FALLBACK_ALLOWED) {
+  throw new Error('JWT_SECRET environment variable must be set in production');
+}
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-development';
 
 /**

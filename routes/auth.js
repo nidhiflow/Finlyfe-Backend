@@ -9,7 +9,15 @@ import { sendOTP, sendWelcomeEmail, sendLoginAlert } from '../services/email.js'
 
 const router = express.Router();
 
+const JWT_SECRET_FALLBACK_ALLOWED = process.env.NODE_ENV !== 'production';
+if (!process.env.JWT_SECRET && !JWT_SECRET_FALLBACK_ALLOWED) {
+    throw new Error('JWT_SECRET environment variable must be set in production');
+}
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-development';
+
+// Dev-only bypasses (demo login, admin login, testuser OTP skip) — disabled in
+// production unless explicitly re-enabled via ALLOW_DEV_BYPASS.
+const DEV_BYPASS_ENABLED = process.env.ALLOW_DEV_BYPASS === 'true' || process.env.NODE_ENV !== 'production';
 
 // Middleware to verify JWT token internally for these routes
 const authenticateToken = (req, res, next) => {
@@ -217,7 +225,7 @@ router.post('/login', async (req, res) => {
 
         // ── Demo account bypass ──────────────────────────────────────────────
         // The login screen shows demo@finly.app / demo123 — make it always work.
-        if (email === 'demo@finly.app' && password === 'demo123') {
+        if (DEV_BYPASS_ENABLED && email === 'demo@finly.app' && password === 'demo123') {
             let { rows: demoRows } = await query('SELECT * FROM users WHERE email = $1', [email]);
             if (demoRows.length === 0) {
                 // Auto-create the demo user on first use
@@ -237,7 +245,7 @@ router.post('/login', async (req, res) => {
         // ────────────────────────────────────────────────────────────────────
 
         // ── Admin account bypass ─────────────────────────────────────────────
-        if (email === 'admin_finly' && password === 'Finly_development@123') {
+        if (DEV_BYPASS_ENABLED && email === 'admin_finly' && password === 'Finly_development@123') {
             let { rows: adminRows } = await query('SELECT * FROM users WHERE email = $1', [email]);
             if (adminRows.length === 0) {
                 const adminId = uuidv4();
@@ -288,7 +296,7 @@ router.post('/login', async (req, res) => {
         // Require OTP for EVERY login for extra security, just like the mock originally indicated.
         // Or if inactive for >48 hours (or new device). Letting it require OTP every time for parity.
         // Modify back to old backend semantics: only require OTP if inactive > 48h or new device
-        if ((hoursSinceLastLogin > 48 || isNewDevice) && email !== 'testuser@finly.com') {
+        if ((hoursSinceLastLogin > 48 || isNewDevice) && !(DEV_BYPASS_ENABLED && email === 'testuser@finly.com')) {
             // Delete old login OTPs
             await query("DELETE FROM otp_codes WHERE email = $1 AND type = 'login'", [email]);
 
@@ -483,25 +491,6 @@ router.get('/me', authenticateToken, async (req, res) => {
         }
         res.json(user);
     } catch (err) {
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// PUT /api/auth/profile — Update user name
-router.put('/profile', authenticateToken, async (req, res) => {
-    try {
-        const { name } = req.body;
-
-        if (!name || !name.trim()) {
-            return res.status(400).json({ error: 'Name is required' });
-        }
-
-        await query('UPDATE users SET name = $1 WHERE id = $2', [name.trim(), req.userId]);
-
-        const { rows } = await query('SELECT id, name, email, created_at FROM users WHERE id = $1', [req.userId]);
-        res.json(rows[0]);
-    } catch (err) {
-        console.error('Update profile error:', err);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
