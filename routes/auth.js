@@ -228,19 +228,23 @@ router.post('/login', async (req, res) => {
         if (DEV_BYPASS_ENABLED && email === 'demo@finly.app' && password === 'demo123') {
             let { rows: demoRows } = await query('SELECT * FROM users WHERE email = $1', [email]);
             if (demoRows.length === 0) {
-                // Auto-create the demo user on first use
+                // Auto-create the demo user on first use, pre-loaded on Premium for beta testing
                 const demoId = uuidv4();
                 const demoHash = bcrypt.hashSync('demo123', 10);
                 await query(
-                    'INSERT INTO users (id, name, email, password, email_verified) VALUES ($1, $2, $3, $4, $5)',
-                    [demoId, 'Demo User', email, demoHash, true]
+                    'INSERT INTO users (id, name, email, password, email_verified, subscription_tier) VALUES ($1, $2, $3, $4, $5, $6)',
+                    [demoId, 'Demo User', email, demoHash, true, 'Premium']
                 );
                 await seedDefaultsForUser(demoId);
-                demoRows = [{ id: demoId, name: 'Demo User', email }];
+                demoRows = [{ id: demoId, name: 'Demo User', email, subscription_tier: 'Premium' }];
+            } else if (demoRows[0].subscription_tier !== 'Premium') {
+                // Keep the demo account on Premium even if it was created before this change
+                await query('UPDATE users SET subscription_tier = $1 WHERE id = $2', ['Premium', demoRows[0].id]);
+                demoRows[0].subscription_tier = 'Premium';
             }
             const demo = demoRows[0];
             const token = jwt.sign({ id: demo.id }, JWT_SECRET, { expiresIn: '30d' });
-            return res.json({ token, user: { id: demo.id, name: demo.name, email: demo.email, subscription_tier: demo.subscription_tier || 'Free' } });
+            return res.json({ token, user: { id: demo.id, name: demo.name, email: demo.email, subscription_tier: demo.subscription_tier || 'Premium' } });
         }
         // ────────────────────────────────────────────────────────────────────
 
