@@ -1,5 +1,5 @@
 import express from 'express';
-import { query } from '../db/index.js';
+import { query, pool } from '../db/index.js';
 import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -45,20 +45,21 @@ router.post('/restore', async (req, res) => {
   const { transactions, accounts, categories, budgets, goals } = req.body;
   const userId = req.user.id || req.userId;
 
+  const client = await pool.connect();
   try {
-    await query('BEGIN');
+    await client.query('BEGIN');
 
     // 1. Delete existing user data
-    await query('DELETE FROM transactions WHERE user_id = $1', [userId]);
-    await query('DELETE FROM budgets WHERE user_id = $1', [userId]);
-    await query('DELETE FROM savings_goals WHERE user_id = $1', [userId]);
-    await query('DELETE FROM categories WHERE user_id = $1', [userId]);
-    await query('DELETE FROM accounts WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM transactions WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM budgets WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM savings_goals WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM categories WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM accounts WHERE user_id = $1', [userId]);
 
     // 2. Insert categories
     if (categories && Array.isArray(categories)) {
       for (const cat of categories) {
-        await query(
+        await client.query(
           'INSERT INTO categories (id, user_id, name, type, icon, color, parent_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
           [cat.id, userId, cat.name, cat.type, cat.icon || null, cat.color || null, cat.parent_id || null]
         );
@@ -68,7 +69,7 @@ router.post('/restore', async (req, res) => {
     // 3. Insert accounts
     if (accounts && Array.isArray(accounts)) {
       for (const acc of accounts) {
-        await query(
+        await client.query(
           'INSERT INTO accounts (id, user_id, name, type, balance, icon, color, parent_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
           [acc.id, userId, acc.name, acc.type, acc.balance || 0, acc.icon || null, acc.color || null, acc.parent_id || null]
         );
@@ -78,9 +79,9 @@ router.post('/restore', async (req, res) => {
     // 4. Insert transactions
     if (transactions && Array.isArray(transactions)) {
       for (const t of transactions) {
-        await query(
+        await client.query(
           `INSERT INTO transactions (
-            id, user_id, type, amount, category_id, subcategory_id, account_id, to_account_id, 
+            id, user_id, type, amount, category_id, subcategory_id, account_id, to_account_id,
             date, note, photo, repeat_group_id, repeat_end_date, is_recurring, repeat_frequency, title
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
           [
@@ -94,7 +95,7 @@ router.post('/restore', async (req, res) => {
     // 5. Insert budgets
     if (budgets && Array.isArray(budgets)) {
       for (const b of budgets) {
-        await query(
+        await client.query(
           'INSERT INTO budgets (id, user_id, category_id, amount, period) VALUES ($1, $2, $3, $4, $5)',
           [b.id, userId, b.category_id, b.amount || 0, b.period]
         );
@@ -104,19 +105,21 @@ router.post('/restore', async (req, res) => {
     // 6. Insert goals
     if (goals && Array.isArray(goals)) {
       for (const g of goals) {
-        await query(
+        await client.query(
           'INSERT INTO savings_goals (id, user_id, name, target_amount, current_amount, month, category_id, account_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
           [g.id, userId, g.name, g.target_amount || 0, g.current_amount || 0, g.month || null, g.category_id || null, g.account_id || null]
         );
       }
     }
 
-    await query('COMMIT');
+    await client.query('COMMIT');
     res.json({ message: "Data restored successfully" });
   } catch (err) {
-    await query('ROLLBACK');
+    await client.query('ROLLBACK');
     console.error("Restore failed:", err);
     res.status(500).json({ error: "Failed to restore data: " + err.message });
+  } finally {
+    client.release();
   }
 });
 
