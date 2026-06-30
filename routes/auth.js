@@ -38,17 +38,6 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
-// Allowed email domains for signup
-const ALLOWED_DOMAINS = [
-    'gmail.com', 'googlemail.com',
-    'outlook.com', 'hotmail.com', 'live.com', 'msn.com',
-    'yahoo.com', 'yahoo.co.in', 'yahoo.co.uk', 'ymail.com',
-    'icloud.com', 'me.com', 'mac.com',
-    'protonmail.com', 'proton.me',
-    'aol.com', 'zoho.com', 'mail.com',
-    'rediffmail.com',
-];
-
 // Generate 6-digit OTP
 function generateOTP() {
     return Math.floor(100000 + Math.random() * 900000).toString();
@@ -72,12 +61,6 @@ router.post('/signup', async (req, res) => {
         if (password.length < 6) {
             return res.status(400).json({ error: 'Password must be at least 6 characters' });
         }
-
-        /* Domain verification temporarily relaxed to allow direct testing */
-        // const emailDomain = email.split('@')[1]?.toLowerCase();
-        // if (!emailDomain || !ALLOWED_DOMAINS.includes(emailDomain)) {
-        //     return res.status(400).json({ error: 'Please use an official email (Gmail, Outlook, Yahoo, iCloud, ProtonMail, etc.)' });
-        // }
 
         // Check if email already registered
         const { rows: existing } = await query('SELECT id FROM users WHERE email = $1', [email]);
