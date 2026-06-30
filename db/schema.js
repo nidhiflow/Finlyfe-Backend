@@ -128,10 +128,12 @@ export async function syncSchema() {
         type TEXT NOT NULL,
         name TEXT,
         password TEXT,
+        phone TEXT,
         expires_at TIMESTAMP NOT NULL,
         used BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT NOW()
       );
+      ALTER TABLE otp_codes ADD COLUMN IF NOT EXISTS phone TEXT;
 
       -- Login Devices table
       CREATE TABLE IF NOT EXISTS login_devices (

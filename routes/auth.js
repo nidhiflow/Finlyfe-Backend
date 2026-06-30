@@ -51,7 +51,7 @@ function hashDevice(userAgent) {
 // POST /api/auth/signup — Step 1: Send OTP
 router.post('/signup', async (req, res) => {
     try {
-        const { name, password } = req.body;
+        const { name, password, phone } = req.body;
         const email = req.body.email?.toLowerCase();
 
         if (!name || !email || !password) {
@@ -77,8 +77,8 @@ router.post('/signup', async (req, res) => {
         const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
 
         await query(
-            'INSERT INTO otp_codes (id, email, code, type, name, password, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-            [uuidv4(), email, code, 'signup', name, hashedPassword, expiresAt]
+            'INSERT INTO otp_codes (id, email, code, type, name, password, phone, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+            [uuidv4(), email, code, 'signup', name, hashedPassword, phone || null, expiresAt]
         );
 
         // Send OTP email
@@ -127,8 +127,8 @@ router.post('/verify-otp', async (req, res) => {
         // Create user account
         const userId = uuidv4();
         await query(
-            'INSERT INTO users (id, name, email, password) VALUES ($1, $2, $3, $4)',
-            [userId, otp.name, email, otp.password]
+            'INSERT INTO users (id, name, email, password, phone) VALUES ($1, $2, $3, $4, $5)',
+            [userId, otp.name, email, otp.password, otp.phone || null]
         );
 
         // Seed default data
@@ -145,7 +145,7 @@ router.post('/verify-otp', async (req, res) => {
 
         res.status(201).json({
             token,
-            user: { id: userId, name: otp.name, email, subscription_tier: 'Free' },
+            user: { id: userId, name: otp.name, email, phone: otp.phone || null, subscription_tier: 'Free' },
         });
     } catch (err) {
         console.error('Verify OTP error:', err);
@@ -183,8 +183,8 @@ router.post('/resend-otp', async (req, res) => {
         const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
         await query(
-            'INSERT INTO otp_codes (id, email, code, type, name, password, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-            [uuidv4(), email, code, type || 'signup', oldOtp.name, oldOtp.password, expiresAt]
+            'INSERT INTO otp_codes (id, email, code, type, name, password, phone, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+            [uuidv4(), email, code, type || 'signup', oldOtp.name, oldOtp.password, oldOtp.phone || null, expiresAt]
         );
 
         await sendOTP(email, code, type || 'signup');
