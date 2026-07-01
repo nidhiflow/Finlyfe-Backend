@@ -12,6 +12,7 @@ import settingsRoutes from "./routes/settings.js";
 import budgetsRoutes from "./routes/budgets.js";
 import aiRoutes from "./routes/ai.js";
 import adminRoutes from "./routes/admin.js";
+import paymentsRoutes from "./routes/payments.js";
 import { initRecurrenceCron } from "./workers/recurrenceCron.js";
 
 const app = express();
@@ -53,6 +54,7 @@ app.use("/api/settings", settingsRoutes);
 app.use("/api/budgets", budgetsRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/payments", paymentsRoutes);
 
 // Start Server
 async function startServer() {
