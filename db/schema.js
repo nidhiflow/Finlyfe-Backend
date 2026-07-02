@@ -24,6 +24,7 @@ export async function syncSchema() {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS photo TEXT;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_tier TEXT DEFAULT 'Free';
       ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT false;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT UNIQUE;
 
       -- Accounts table
       CREATE TABLE IF NOT EXISTS accounts (
@@ -191,6 +192,11 @@ export async function syncSchema() {
       if (cols.length > 0) {
         await client.query(`ALTER TABLE users RENAME COLUMN password_hash TO password`);
       }
+    } catch(e) { /* ignore */ }
+
+    // Allow NULL password for Google OAuth-only accounts
+    try {
+      await client.query(`ALTER TABLE users ALTER COLUMN password DROP NOT NULL`);
     } catch(e) { /* ignore */ }
 
     // Make account_id nullable on transactions

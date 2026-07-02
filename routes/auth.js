@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
+import { OAuth2Client } from 'google-auth-library';
 import { query } from '../db/index.js';
 import { seedDefaultsForUser } from '../db/seed.js';
 import { sendOTP, sendWelcomeEmail, sendLoginAlert } from '../services/email.js';
@@ -14,6 +15,9 @@ if (!process.env.JWT_SECRET && !JWT_SECRET_FALLBACK_ALLOWED) {
     throw new Error('JWT_SECRET environment variable must be set in production');
 }
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-development';
+
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
 
 // Dev-only bypasses (demo login, admin login, testuser OTP skip) — disabled in
 // production unless explicitly re-enabled via ALLOW_DEV_BYPASS.
@@ -193,6 +197,88 @@ router.post('/resend-otp', async (req, res) => {
     } catch (err) {
         console.error('Resend-OTP error:', err);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// POST /api/auth/google — Sign in or sign up with a Google ID token
+router.post('/google', async (req, res) => {
+    try {
+        const { credential } = req.body;
+
+        if (!credential) {
+            return res.status(400).json({ error: 'Google credential is required' });
+        }
+
+        if (!googleClient) {
+            return res.status(500).json({ error: 'Google sign-in is not configured on the server' });
+        }
+
+        const ticket = await googleClient.verifyIdToken({
+            idToken: credential,
+            audience: GOOGLE_CLIENT_ID,
+        });
+        const payload = ticket.getPayload();
+        const email = payload?.email?.toLowerCase();
+
+        if (!email || !payload.email_verified) {
+            return res.status(401).json({ error: 'Google account email is not verified' });
+        }
+
+        const { rows } = await query('SELECT * FROM users WHERE email = $1 OR google_id = $2', [email, payload.sub]);
+        let user;
+
+        if (rows.length === 0) {
+            // New user — create the account (no password; email already verified by Google)
+            const userId = uuidv4();
+            const { rows: created } = await query(
+                'INSERT INTO users (id, name, email, google_id, photo, email_verified) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+                [userId, payload.name || email.split('@')[0], email, payload.sub, payload.picture || null, true]
+            );
+            user = created[0];
+            await seedDefaultsForUser(userId);
+            setTimeout(() => sendWelcomeEmail(email, user.name), 2000);
+        } else {
+            user = rows[0];
+            // Link Google to an existing email/password account on first Google sign-in
+            if (!user.google_id) {
+                const { rows: updated } = await query(
+                    'UPDATE users SET google_id = $1, email_verified = true, photo = COALESCE(photo, $2) WHERE id = $3 RETURNING *',
+                    [payload.sub, payload.picture || null, user.id]
+                );
+                user = updated[0];
+            }
+        }
+
+        // Device tracking (no OTP challenge — Google has already verified the user)
+        const userAgent = req.headers['user-agent'] || 'Unknown';
+        const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'Unknown';
+        const deviceHash = hashDevice(userAgent);
+
+        const { rows: devices } = await query(
+            'SELECT id FROM login_devices WHERE user_id = $1 AND device_hash = $2',
+            [user.id, deviceHash]
+        );
+        if (devices.length === 0) {
+            await query(
+                'INSERT INTO login_devices (id, user_id, device_hash, device_info, ip_address) VALUES ($1, $2, $3, $4, $5)',
+                [uuidv4(), user.id, deviceHash, userAgent, ip]
+            );
+        } else {
+            await query(
+                'UPDATE login_devices SET last_seen = NOW(), ip_address = $1 WHERE user_id = $2 AND device_hash = $3',
+                [ip, user.id, deviceHash]
+            );
+        }
+
+        const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '30d' });
+
+        res.json({
+            token,
+            user: { id: user.id, name: user.name, email: user.email, photo: user.photo, subscription_tier: user.subscription_tier || 'Free' },
+        });
+    } catch (err) {
+        console.error('Google sign-in error:', err);
+        res.status(401).json({ error: 'Google sign-in failed. Please try again.' });
     }
 });
 
