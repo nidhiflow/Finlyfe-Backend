@@ -59,6 +59,21 @@ export function getCategoryMetadata(catId, dbName, dbIcon, dbColor) {
   };
 }
 
+// Reverts a user's subscription to Free once subscription_expires_at has passed
+// (used for time-limited coupons/promos rather than recurring billing plans).
+export async function downgradeIfSubscriptionExpired(user) {
+  if (user && user.subscription_expires_at && user.subscription_tier !== 'Free'
+      && new Date(user.subscription_expires_at) <= new Date()) {
+    const { rows } = await query(
+      `UPDATE users SET subscription_tier = 'Free', subscription_expires_at = NULL
+       WHERE id = $1 RETURNING *`,
+      [user.id]
+    );
+    return rows[0];
+  }
+  return user;
+}
+
 export function isSavings(catId, dbName, note) {
   const cat = String(catId || '').toLowerCase();
   const name = String(dbName || '').toLowerCase();

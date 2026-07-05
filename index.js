@@ -13,7 +13,10 @@ import budgetsRoutes from "./routes/budgets.js";
 import aiRoutes from "./routes/ai.js";
 import adminRoutes from "./routes/admin.js";
 import paymentsRoutes from "./routes/payments.js";
+import couponsRoutes from "./routes/coupons.js";
+import backupRoutes from "./routes/backup.js";
 import { initRecurrenceCron } from "./workers/recurrenceCron.js";
+import { initBackupCron } from "./workers/backupCron.js";
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -55,6 +58,8 @@ app.use("/api/budgets", budgetsRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/payments", paymentsRoutes);
+app.use("/api/coupons", couponsRoutes);
+app.use("/api/backup", backupRoutes);
 
 // Start Server
 async function startServer() {
@@ -64,6 +69,7 @@ async function startServer() {
       await syncSchema();
       // Start background workers
       initRecurrenceCron();
+      initBackupCron();
     } else {
       console.warn("⚠️ DATABASE_URL is not set. Database is not connected.");
     }

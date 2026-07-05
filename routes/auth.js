@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { OAuth2Client } from 'google-auth-library';
-import { query } from '../db/index.js';
+import { query, downgradeIfSubscriptionExpired } from '../db/index.js';
 import { seedDefaultsForUser } from '../db/seed.js';
 import { sendOTP, sendWelcomeEmail, sendLoginAlert } from '../services/email.js';
 
@@ -554,11 +554,11 @@ router.post('/reset-password', async (req, res) => {
 // GET /api/auth/me
 router.get('/me', authenticateToken, async (req, res) => {
     try {
-        const { rows } = await query('SELECT id, name, email, phone, photo, subscription_tier, created_at FROM users WHERE id = $1', [req.userId]);
+        const { rows } = await query('SELECT id, name, email, phone, photo, subscription_tier, subscription_expires_at, created_at FROM users WHERE id = $1', [req.userId]);
         if (rows.length === 0) {
             return res.status(404).json({ error: 'User not found' });
         }
-        const user = rows[0];
+        let user = await downgradeIfSubscriptionExpired(rows[0]);
         if (user.email === 'admin_finly') {
             user.isAdmin = true;
         }

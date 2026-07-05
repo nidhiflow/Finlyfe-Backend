@@ -25,6 +25,8 @@ export async function syncSchema() {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_tier TEXT DEFAULT 'Free';
       ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT false;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT UNIQUE;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS google_drive_refresh_token TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_expires_at TIMESTAMP;
 
       -- Accounts table
       CREATE TABLE IF NOT EXISTS accounts (
@@ -112,6 +114,16 @@ export async function syncSchema() {
       ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS month TEXT;
       ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS category_id TEXT REFERENCES categories(id) ON DELETE SET NULL;
       ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL;
+      ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS target_date TEXT;
+      ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS emoji TEXT;
+      ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS color TEXT;
+      ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS start_date TEXT;
+      ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS tracking_mode TEXT DEFAULT 'Manual';
+      ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'one-time';
+      ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS linked_account TEXT;
+      ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS carry_forward BOOLEAN DEFAULT false;
+      ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS notes TEXT;
+      ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';
 
       -- Settings table
       CREATE TABLE IF NOT EXISTS settings (
@@ -146,6 +158,15 @@ export async function syncSchema() {
         first_seen TIMESTAMP DEFAULT NOW(),
         last_seen TIMESTAMP DEFAULT NOW(),
         UNIQUE(user_id, device_hash)
+      );
+
+      -- Coupon Redemptions table (tracks which promo codes each user has used)
+      CREATE TABLE IF NOT EXISTS coupon_redemptions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        code TEXT NOT NULL,
+        redeemed_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(user_id, code)
       );
 
       -- Page Analytics table (tracks which screens users visit)
