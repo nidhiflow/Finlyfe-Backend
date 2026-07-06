@@ -9,8 +9,11 @@ import { runGoogleDriveBackupForUser } from '../workers/backupCron.js';
 const router = express.Router();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-development';
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+// Dedicated OAuth client for Drive backup — deliberately separate from
+// GOOGLE_CLIENT_ID (which is used for "Sign in with Google") so this feature
+// can be configured/rotated without touching the sign-in flow.
+const GOOGLE_DRIVE_CLIENT_ID = process.env.GOOGLE_DRIVE_CLIENT_ID;
+const GOOGLE_DRIVE_CLIENT_SECRET = process.env.GOOGLE_DRIVE_CLIENT_SECRET;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 
@@ -28,7 +31,7 @@ const pendingOAuth = new Map();
 const NONCE_TTL_MS = 10 * 60 * 1000;
 
 function createOAuthClient(redirectUri) {
-  return new OAuth2Client(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, redirectUri);
+  return new OAuth2Client(GOOGLE_DRIVE_CLIENT_ID, GOOGLE_DRIVE_CLIENT_SECRET, redirectUri);
 }
 
 router.get('/google/status', authenticateToken, async (req, res) => {
@@ -43,8 +46,8 @@ router.get('/google/status', authenticateToken, async (req, res) => {
 // GET /api/backup/google/connect?token=<jwt> — the browser is navigated here directly
 // (not a fetch call), so auth comes via a query param rather than an Authorization header.
 router.get('/google/connect', (req, res) => {
-  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
-    return res.status(500).send('Google Drive backup is not configured on the server (missing GOOGLE_CLIENT_SECRET).');
+  if (!GOOGLE_DRIVE_CLIENT_ID || !GOOGLE_DRIVE_CLIENT_SECRET) {
+    return res.status(500).send('Google Drive backup is not configured on the server (missing GOOGLE_DRIVE_CLIENT_ID/SECRET).');
   }
 
   const token = req.query.token;

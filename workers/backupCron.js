@@ -2,11 +2,12 @@ import cron from 'node-cron';
 import { OAuth2Client } from 'google-auth-library';
 import { query } from '../db/index.js';
 
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+// Dedicated OAuth client for Drive backup — separate from GOOGLE_CLIENT_ID (Sign in with Google).
+const GOOGLE_DRIVE_CLIENT_ID = process.env.GOOGLE_DRIVE_CLIENT_ID;
+const GOOGLE_DRIVE_CLIENT_SECRET = process.env.GOOGLE_DRIVE_CLIENT_SECRET;
 
 async function getAccessToken(refreshToken) {
-  const client = new OAuth2Client(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET);
+  const client = new OAuth2Client(GOOGLE_DRIVE_CLIENT_ID, GOOGLE_DRIVE_CLIENT_SECRET);
   client.setCredentials({ refresh_token: refreshToken });
   const { token } = await client.getAccessToken();
   if (!token) throw new Error('Failed to obtain Google access token from refresh token');
