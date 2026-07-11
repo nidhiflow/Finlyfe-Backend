@@ -2,6 +2,7 @@ import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { query, getCategoryMetadata } from '../db/index.js';
 import { authenticateToken } from '../middleware/auth.js';
+import XLSX from 'xlsx';
 const pool = { query };
 
 const router = express.Router();
@@ -449,18 +450,72 @@ router.post('/scan-receipt', authenticateToken, async (req, res) => {
             });
         }
 
-        const { image } = req.body; // base64 image data
+        const { image } = req.body; // base64 image data or document data
         if (!image) {
-            return res.status(400).json({ error: 'No image provided' });
+            return res.status(400).json({ error: 'No image or document provided' });
         }
 
-        // Validate / normalize image data
-        if (image.startsWith('data:') && !image.startsWith('data:image/')) {
-            return res.status(400).json({ error: 'Invalid image data' });
+        // Validate / normalize input file format
+        const allowedMimePrefixes = [
+            'data:image/',
+            'data:application/pdf',
+            'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'data:application/vnd.ms-excel',
+            'data:text/csv',
+            'data:text/plain'
+        ];
+
+        let isExcel = false;
+        let isCSV = false;
+        let isPDF = false;
+        let excelTextContent = '';
+
+        if (image.startsWith('data:')) {
+            const isAllowed = allowedMimePrefixes.some(prefix => image.startsWith(prefix));
+            if (!isAllowed) {
+                return res.status(400).json({ error: 'Unsupported file format. Please upload an image, PDF, Excel, or CSV file.' });
+            }
+
+            if (image.startsWith('data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') || image.startsWith('data:application/vnd.ms-excel')) {
+                isExcel = true;
+            } else if (image.startsWith('data:text/csv')) {
+                isCSV = true;
+            } else if (image.startsWith('data:application/pdf')) {
+                isPDF = true;
+            }
         }
 
-        const scanPrompt = `Analyze this receipt or bill image.
+        // Extract mime type and raw base64 data
+        let mimeType = 'image/jpeg';
+        let base64Data = image;
+        if (image.startsWith('data:')) {
+            const match = image.match(/^data:([a-zA-Z0-9+.-]+\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+            if (match) {
+                mimeType = match[1];
+                base64Data = match[2];
+            }
+        }
 
+        // If Excel, parse it to CSV string
+        if (isExcel) {
+            try {
+                const buffer = Buffer.from(base64Data, 'base64');
+                const workbook = XLSX.read(buffer, { type: 'buffer' });
+                const sheetName = workbook.SheetNames[0];
+                const sheet = workbook.Sheets[sheetName];
+                excelTextContent = XLSX.utils.sheet_to_csv(sheet);
+                
+                // Repackage Excel as a CSV for Gemini to analyze
+                base64Data = Buffer.from(excelTextContent).toString('base64');
+                mimeType = 'text/csv';
+            } catch (err) {
+                console.error('Failed to parse Excel file:', err);
+                return res.status(400).json({ error: 'Failed to parse Excel file. The file may be corrupted.' });
+            }
+        }
+
+        const scanPrompt = `Analyze this receipt, bill, or spreadsheet transaction data.
+ 
 1. Category Classification:
 You MUST classify the receipt or its line items into one of the following exact category names:
 - "Food & Dining"
@@ -514,17 +569,6 @@ Return ONLY valid JSON, no other text.`;
         let text = '';
 
         if (GEMINI_API_KEY) {
-            // Extract mime type and raw base64 data
-            let mimeType = 'image/jpeg';
-            let base64Data = image;
-            if (image.startsWith('data:')) {
-                const match = image.match(/^data:(image\/[a-zA-Z+.-]+);base64,(.+)$/);
-                if (match) {
-                    mimeType = match[1];
-                    base64Data = match[2];
-                }
-            }
-
             const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
             const geminiBody = {
                 contents: [
@@ -562,13 +606,24 @@ Return ONLY valid JSON, no other text.`;
             const geminiData = await geminiResponse.json();
             text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
         } else {
-            const dataUrl = image.startsWith('data:')
-                ? image
-                : `data:image/jpeg;base64,${image}`;
+            // Groq fallback logic
+            let groqMessages;
+            if (isExcel || isCSV) {
+                const csvText = isExcel ? excelTextContent : Buffer.from(base64Data, 'base64').toString('utf-8');
+                groqMessages = [
+                    {
+                        role: 'user',
+                        content: `${scanPrompt}\n\nHere is the spreadsheet transaction data in CSV format:\n\n${csvText}`
+                    }
+                ];
+            } else if (isPDF) {
+                return res.status(400).json({ error: 'PDF scanning is only supported when GEMINI_API_KEY is configured. Please use Gemini or upload an image.' });
+            } else {
+                const dataUrl = image.startsWith('data:')
+                    ? image
+                    : `data:image/jpeg;base64,${image}`;
 
-            const groqBody = {
-                model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-                messages: [
+                groqMessages = [
                     {
                         role: 'user',
                         content: [
@@ -576,7 +631,12 @@ Return ONLY valid JSON, no other text.`;
                             { type: 'image_url', image_url: { url: dataUrl } }
                         ]
                     }
-                ],
+                ];
+            }
+
+            const groqBody = {
+                model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+                messages: groqMessages,
                 temperature: 0.1,
                 max_tokens: 800
             };
