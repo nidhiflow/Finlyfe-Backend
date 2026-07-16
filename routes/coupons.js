@@ -8,7 +8,8 @@ router.use(authenticateToken);
 
 // Coupon catalogue — code -> { tier, months }
 const COUPONS = {
-  MUKUNFREE: { tier: 'Pro', months: 6 },
+  MUKUNFREE: { tier: 'Premium', months: 6 },
+  PG1011: { tier: 'Premium', months: 6 },
 };
 
 // POST /api/coupons/redeem — apply a promo code to the current user's subscription
