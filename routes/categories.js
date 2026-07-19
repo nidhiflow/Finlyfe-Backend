@@ -9,7 +9,7 @@ router.use(authenticateToken);
 // Get all categories
 router.get('/', async (req, res) => {
   try {
-    const result = await query('SELECT * FROM categories WHERE user_id = $1 ORDER BY created_at ASC', [req.userId]);
+    const result = await query('SELECT * FROM categories WHERE user_id = $1 ORDER BY id ASC', [req.userId]);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
