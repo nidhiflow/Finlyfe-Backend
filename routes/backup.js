@@ -21,7 +21,9 @@ function getRedirectUri(req) {
   // Prefer an explicit env var (required in production — must exactly match the
   // Authorized redirect URI configured in Google Cloud Console for this OAuth client).
   if (process.env.GOOGLE_REDIRECT_URI) return process.env.GOOGLE_REDIRECT_URI;
-  return `${req.protocol}://${req.get('host')}/api/backup/google/callback`;
+  const host = req.get('host');
+  const protocol = host.includes('localhost') ? req.protocol : 'https';
+  return `${protocol}://${host}/api/backup/google/callback`;
 }
 
 // Short-lived in-memory store binding a one-time OAuth state nonce to the user
