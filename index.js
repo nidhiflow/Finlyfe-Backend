@@ -22,7 +22,12 @@ const app = express();
 const PORT = process.env.PORT || 3002;
 
 app.use(cors());
-app.use(express.json({ limit: "50mb" }));
+app.use(express.json({
+  limit: "50mb",
+  // Retained for webhook signature verification (routes/payments.js), which needs
+  // the exact bytes Razorpay sent, not the re-serialized parsed object.
+  verify: (req, res, buf) => { req.rawBody = buf; },
+}));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // Health check

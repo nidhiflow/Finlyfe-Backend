@@ -177,6 +177,22 @@ export async function syncSchema() {
         visited_at TIMESTAMP DEFAULT NOW()
       );
 
+      -- Payments table (Razorpay checkout + QR flows; one row per order or QR code)
+      CREATE TABLE IF NOT EXISTS payments (
+        id TEXT PRIMARY KEY,
+        order_id TEXT UNIQUE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        plan TEXT NOT NULL,
+        billing_cycle TEXT NOT NULL DEFAULT 'monthly',
+        amount INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'created',
+        method TEXT NOT NULL DEFAULT 'checkout',
+        razorpay_payment_id TEXT,
+        qr_code_id TEXT UNIQUE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+
       -- Performance Indexes
       CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions(user_id);
       CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
@@ -189,6 +205,8 @@ export async function syncSchema() {
       CREATE INDEX IF NOT EXISTS idx_page_analytics_page ON page_analytics(page);
       CREATE INDEX IF NOT EXISTS idx_page_analytics_user_id ON page_analytics(user_id);
       CREATE INDEX IF NOT EXISTS idx_page_analytics_visited_at ON page_analytics(visited_at);
+      CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id);
+      CREATE INDEX IF NOT EXISTS idx_payments_qr_code_id ON payments(qr_code_id);
 
       -- Composite indexes for common filter/aggregate query shapes (user_id + date range, user_id + category, account lookups)
       CREATE INDEX IF NOT EXISTS idx_transactions_user_date ON transactions(user_id, date DESC);
