@@ -23,6 +23,15 @@ const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : nul
 // production unless explicitly re-enabled via ALLOW_DEV_BYPASS.
 const DEV_BYPASS_ENABLED = process.env.ALLOW_DEV_BYPASS === 'true' || process.env.NODE_ENV !== 'production';
 
+// Temporary kill-switch for email OTP (set DISABLE_OTP=true). Used for the Razorpay
+// verification walkthrough so reviewers can sign up / sign in / reset a password without
+// waiting on an inbox. Every OTP code path below is left intact — unset the variable
+// (or set it to anything other than 'true') and email verification is fully restored.
+const OTP_DISABLED = process.env.DISABLE_OTP === 'true';
+if (OTP_DISABLED) {
+    console.warn('⚠️  DISABLE_OTP=true — email OTP verification is BYPASSED. Do not leave this on in production.');
+}
+
 // Middleware to verify JWT token internally for these routes
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
@@ -72,12 +81,35 @@ router.post('/signup', async (req, res) => {
             return res.status(409).json({ error: 'This email is already registered. Please sign in instead.' });
         }
 
+        const hashedPassword = bcrypt.hashSync(password, 10);
+
+        // OTP bypass: create the account straight away and hand back a session.
+        if (OTP_DISABLED) {
+            const userId = uuidv4();
+            await query(
+                'INSERT INTO users (id, name, email, password, phone, email_verified) VALUES ($1, $2, $3, $4, $5, $6)',
+                [userId, name, email, hashedPassword, phone || null, true]
+            );
+
+            await seedDefaultsForUser(userId);
+
+            const token = jwt.sign({ id: userId, email }, JWT_SECRET, { expiresIn: '30d' });
+
+            // Best-effort only — a missing/expired Brevo key must not fail the signup.
+            setTimeout(() => sendWelcomeEmail(email, name).catch(() => {}), 2000);
+
+            return res.status(201).json({
+                token,
+                otpDisabled: true,
+                user: { id: userId, name, email, phone: phone || null, subscription_tier: 'Free' },
+            });
+        }
+
         // Delete any old OTPs for this email
         await query("DELETE FROM otp_codes WHERE email = $1 AND type = 'signup'", [email]);
 
         // Generate and store OTP
         const code = generateOTP();
-        const hashedPassword = bcrypt.hashSync(password, 10);
         const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
 
         await query(
@@ -103,6 +135,12 @@ router.post('/verify-otp', async (req, res) => {
 
         if (!email || !code) {
             return res.status(400).json({ error: 'Email and verification code are required' });
+        }
+
+        // OTP bypass: nothing was ever emailed, so there is nothing to check. The reset flow
+        // still calls this step, so wave it through; /reset-password re-checks the account.
+        if (OTP_DISABLED) {
+            return res.json({ message: 'Verification is currently disabled', verified: true, otpDisabled: true });
         }
 
         const { rows } = await query(
@@ -142,7 +180,7 @@ router.post('/verify-otp', async (req, res) => {
         const token = jwt.sign({ id: userId, email }, JWT_SECRET, { expiresIn: '30d' });
 
         // Send welcome email (small delay to avoid Brevo rate limit)
-        setTimeout(() => sendWelcomeEmail(email, otp.name), 2000);
+        setTimeout(() => sendWelcomeEmail(email, otp.name).catch(() => {}), 2000);
 
         // Clean up old OTPs
         await query("DELETE FROM otp_codes WHERE email = $1 AND type = 'signup'", [email]);
@@ -165,6 +203,10 @@ router.post('/resend-otp', async (req, res) => {
 
         if (!email) {
             return res.status(400).json({ error: 'Email is required' });
+        }
+
+        if (OTP_DISABLED) {
+            return res.json({ message: 'Verification is currently disabled', otpDisabled: true });
         }
 
         // Get existing OTP data (for signup, we need the name and password)
@@ -369,7 +411,7 @@ router.post('/login', async (req, res) => {
         // Require OTP for EVERY login for extra security, just like the mock originally indicated.
         // Or if inactive for >48 hours (or new device). Letting it require OTP every time for parity.
         // Modify back to old backend semantics: only require OTP if inactive > 48h or new device
-        if ((hoursSinceLastLogin > 48 || isNewDevice) && !(DEV_BYPASS_ENABLED && email === 'testuser@finly.com')) {
+        if (!OTP_DISABLED && (hoursSinceLastLogin > 48 || isNewDevice) && !(DEV_BYPASS_ENABLED && email === 'testuser@finly.com')) {
             // Delete old login OTPs
             await query("DELETE FROM otp_codes WHERE email = $1 AND type = 'login'", [email]);
 
@@ -390,11 +432,20 @@ router.post('/login', async (req, res) => {
 
         const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '30d' });
 
-        // Update last seen
-        await query(
-            'UPDATE login_devices SET last_seen = NOW(), ip_address = $1 WHERE user_id = $2 AND device_hash = $3',
-            [ip, user.id, deviceHash]
-        );
+        // Record the device. Previously this only ever UPDATEd — fine when a first-time device
+        // was guaranteed to go through verify-login-otp (which INSERTs), but with OTP bypassed
+        // that branch never runs, so a new device would never be stored at all.
+        if (isNewDevice) {
+            await query(
+                'INSERT INTO login_devices (id, user_id, device_hash, device_info, ip_address) VALUES ($1, $2, $3, $4, $5)',
+                [uuidv4(), user.id, deviceHash, userAgent, ip]
+            );
+        } else {
+            await query(
+                'UPDATE login_devices SET last_seen = NOW(), ip_address = $1 WHERE user_id = $2 AND device_hash = $3',
+                [ip, user.id, deviceHash]
+            );
+        }
 
         res.json({
             token,
@@ -482,7 +533,20 @@ router.post('/forgot-password', async (req, res) => {
         const { rows } = await query('SELECT id FROM users WHERE email = $1', [email]);
         if (rows.length === 0) {
             // Don't reveal if email exists or not (security)
-            return res.json({ message: 'If this email is registered, a reset code has been sent.' });
+            return res.json({
+                message: OTP_DISABLED
+                    ? 'If this email is registered, you can set a new password now.'
+                    : 'If this email is registered, a reset code has been sent.',
+                ...(OTP_DISABLED ? { otpDisabled: true } : {}),
+            });
+        }
+
+        // OTP bypass: skip the emailed code and let the client go straight to the new password.
+        if (OTP_DISABLED) {
+            return res.json({
+                message: 'If this email is registered, you can set a new password now.',
+                otpDisabled: true,
+            });
         }
 
         // Delete old reset OTPs
@@ -511,12 +575,23 @@ router.post('/reset-password', async (req, res) => {
         const { code, newPassword } = req.body;
         const email = req.body.email?.toLowerCase();
 
-        if (!email || !code || !newPassword) {
+        if (!email || !newPassword || (!OTP_DISABLED && !code)) {
             return res.status(400).json({ error: 'Email, code, and new password are required' });
         }
 
         if (newPassword.length < 6) {
             return res.status(400).json({ error: 'Password must be at least 6 characters' });
+        }
+
+        // OTP bypass: no code was ever issued, so reset against the account itself.
+        if (OTP_DISABLED) {
+            const { rows: users } = await query('SELECT id FROM users WHERE email = $1', [email]);
+            if (users.length === 0) {
+                return res.status(400).json({ error: 'No account found for this email' });
+            }
+            const hashed = bcrypt.hashSync(newPassword, 10);
+            await query('UPDATE users SET password = $1 WHERE email = $2', [hashed, email]);
+            return res.json({ message: 'Password reset successful. You can now sign in with your new password.' });
         }
 
         const { rows } = await query(
