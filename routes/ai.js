@@ -1,5 +1,6 @@
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import rateLimit from 'express-rate-limit';
 import { query, getCategoryMetadata } from '../db/index.js';
 import { authenticateToken } from '../middleware/auth.js';
 import XLSX from 'xlsx';
@@ -7,6 +8,17 @@ const pool = { query };
 
 const router = express.Router();
 const CHAT_RETENTION_DAYS = 7;
+
+// The routes below that call a paid LLM API (Groq/Gemini) get this — cap per user,
+// not per IP, so cost/abuse is bounded regardless of shared NAT/office IPs.
+const aiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => req.userId || req.ip,
+    message: { error: 'Too many AI requests. Please slow down and try again shortly.' },
+});
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -27,7 +39,7 @@ async function getUserCurrency(userId) {
 }
 
 // GET /api/ai/insights — AI coach style spending insights
-router.get('/insights', authenticateToken, async (req, res) => {
+router.get('/insights', authenticateToken, aiLimiter, async (req, res) => {
     try {
         if (!GROQ_API_KEY) {
             return res.json({
@@ -172,7 +184,7 @@ Please write 2–3 key insights and 1–2 simple recommended next actions.`;
 });
 
 // GET /api/ai/chart-summary — AI summary for the current chart date range
-router.get('/chart-summary', authenticateToken, async (req, res) => {
+router.get('/chart-summary', authenticateToken, aiLimiter, async (req, res) => {
     try {
         if (!GROQ_API_KEY) {
             return res.json({
@@ -301,7 +313,7 @@ Rules:
 });
 
 // GET /api/ai/budget-suggestions — AI-suggested budget amounts from recent spending
-router.get('/budget-suggestions', authenticateToken, async (req, res) => {
+router.get('/budget-suggestions', authenticateToken, aiLimiter, async (req, res) => {
     try {
         if (!GROQ_API_KEY) {
             return res.json({
@@ -437,7 +449,7 @@ Be practical: suggest slightly above average spending to allow flexibility. Roun
 });
 
 // POST /api/ai/scan-receipt — Scan a receipt image and extract transaction details
-router.post('/scan-receipt', authenticateToken, async (req, res) => {
+router.post('/scan-receipt', authenticateToken, aiLimiter, async (req, res) => {
     try {
         if (!GEMINI_API_KEY && !GROQ_API_KEY) {
             // Mock receipt scan for demo
@@ -716,7 +728,7 @@ Return ONLY valid JSON, no other text.`;
 });
 
 // POST /api/ai/chat — AI Agent chat
-router.post('/chat', authenticateToken, async (req, res) => {
+router.post('/chat', authenticateToken, aiLimiter, async (req, res) => {
     try {
         const { message } = req.body;
         if (!message) {

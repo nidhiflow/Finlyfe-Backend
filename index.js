@@ -1,6 +1,8 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
+import compression from "compression";
 import { syncSchema } from "./db/schema.js";
 import authRoutes from "./routes/auth.js";
 import transactionRoutes from "./routes/transactions.js";
@@ -20,6 +22,12 @@ import { initBackupCron } from "./workers/backupCron.js";
 
 const app = express();
 const PORT = process.env.PORT || 3002;
+
+// Standard security headers (HSTS, X-Content-Type-Options, hides X-Powered-By, etc).
+// CSP is left at helmet's default — this is a pure JSON API with no HTML views, so
+// it has no effect on how the frontend renders, but costs nothing to include.
+app.use(helmet());
+app.use(compression());
 
 // Render (and most PaaS hosts) sit behind a reverse proxy, so req.ip is the
 // proxy's address unless we trust the first hop's X-Forwarded-For. Needed for
