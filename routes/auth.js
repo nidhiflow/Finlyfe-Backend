@@ -4,11 +4,30 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { OAuth2Client } from 'google-auth-library';
+import rateLimit from 'express-rate-limit';
 import { query, downgradeIfSubscriptionExpired } from '../db/index.js';
 import { seedDefaultsForUser } from '../db/seed.js';
 import { sendOTP, sendWelcomeEmail, sendLoginAlert } from '../services/email.js';
 
 const router = express.Router();
+
+// Credential-guessing surfaces (login, OTP checks, password reset) get a tight
+// per-IP cap; account creation gets a looser one so a shared NAT/office IP
+// doesn't lock out real signups.
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many attempts. Please try again later.' },
+});
+const otpLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many attempts. Please try again later.' },
+});
 
 const JWT_SECRET_FALLBACK_ALLOWED = process.env.NODE_ENV !== 'production';
 if (!process.env.JWT_SECRET && !JWT_SECRET_FALLBACK_ALLOWED) {
@@ -62,7 +81,7 @@ function hashDevice(userAgent) {
 }
 
 // POST /api/auth/signup — Step 1: Send OTP
-router.post('/signup', async (req, res) => {
+router.post('/signup', authLimiter, async (req, res) => {
     try {
         const { name, password, phone } = req.body;
         const email = req.body.email?.toLowerCase();
@@ -128,7 +147,7 @@ router.post('/signup', async (req, res) => {
 });
 
 // POST /api/auth/verify-otp — Step 2: Verify and create account
-router.post('/verify-otp', async (req, res) => {
+router.post('/verify-otp', otpLimiter, async (req, res) => {
     try {
         const { code, type } = req.body;
         const email = req.body.email?.toLowerCase();
@@ -196,7 +215,7 @@ router.post('/verify-otp', async (req, res) => {
 });
 
 // POST /api/auth/resend-otp
-router.post('/resend-otp', async (req, res) => {
+router.post('/resend-otp', otpLimiter, async (req, res) => {
     try {
         const { type } = req.body;
         const email = req.body.email?.toLowerCase();
@@ -243,7 +262,7 @@ router.post('/resend-otp', async (req, res) => {
 });
 
 // POST /api/auth/google — Sign in or sign up with a Google ID token
-router.post('/google', async (req, res) => {
+router.post('/google', authLimiter, async (req, res) => {
     try {
         const { credential } = req.body;
 
@@ -325,7 +344,7 @@ router.post('/google', async (req, res) => {
 });
 
 // POST /api/auth/login
-router.post('/login', async (req, res) => {
+router.post('/login', otpLimiter, async (req, res) => {
     try {
         const { password } = req.body;
         const email = req.body.email?.toLowerCase();
@@ -458,7 +477,7 @@ router.post('/login', async (req, res) => {
 });
 
 // POST /api/auth/verify-login-otp — Complete login after OTP
-router.post('/verify-login-otp', async (req, res) => {
+router.post('/verify-login-otp', otpLimiter, async (req, res) => {
     try {
         const { code } = req.body;
         const email = req.body.email?.toLowerCase();
@@ -522,7 +541,7 @@ router.post('/verify-login-otp', async (req, res) => {
 });
 
 // POST /api/auth/forgot-password
-router.post('/forgot-password', async (req, res) => {
+router.post('/forgot-password', otpLimiter, async (req, res) => {
     try {
         const email = req.body.email?.toLowerCase();
 
@@ -570,7 +589,7 @@ router.post('/forgot-password', async (req, res) => {
 });
 
 // POST /api/auth/reset-password
-router.post('/reset-password', async (req, res) => {
+router.post('/reset-password', otpLimiter, async (req, res) => {
     try {
         const { code, newPassword } = req.body;
         const email = req.body.email?.toLowerCase();

@@ -21,7 +21,28 @@ import { initBackupCron } from "./workers/backupCron.js";
 const app = express();
 const PORT = process.env.PORT || 3002;
 
-app.use(cors());
+// Render (and most PaaS hosts) sit behind a reverse proxy, so req.ip is the
+// proxy's address unless we trust the first hop's X-Forwarded-For. Needed for
+// per-IP rate limiting (routes/auth.js) to key off the real client, not the LB.
+app.set('trust proxy', 1);
+
+// Restrict cross-origin API access to known frontends. Requests with no Origin
+// header (mobile TWA/webview shells, server-to-server calls, curl) are allowed
+// through since CORS only governs browser-initiated cross-origin fetch/XHR.
+const allowedOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || 'http://localhost:5173')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+}));
 app.use(express.json({
   limit: "50mb",
   // Retained for webhook signature verification (routes/payments.js), which needs

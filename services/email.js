@@ -111,9 +111,14 @@ export async function sendOTP(email, code, type) {
         console.log(`📧 OTP sent to ${email} (${type})`);
     } catch (err) {
         console.error('Email send error:', err);
-        console.log('\n=========================================');
-        console.log(`[DEVELOPMENT BYPASS] OTP for ${email} (${type}) is: ${code}`);
-        console.log('=========================================\n');
+        // Never print the raw code outside development — production log
+        // aggregators are not a safe place for a live OTP on a finance app.
+        if (process.env.NODE_ENV !== 'production') {
+            console.log('\n=========================================');
+            console.log(`[DEVELOPMENT BYPASS] OTP for ${email} (${type}) is: ${code}`);
+            console.log('=========================================\n');
+        }
+        throw err;
     }
 }
 
