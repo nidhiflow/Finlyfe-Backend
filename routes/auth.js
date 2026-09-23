@@ -335,7 +335,7 @@ router.post('/google', authLimiter, async (req, res) => {
 
         res.json({
             token,
-            user: { id: user.id, name: user.name, email: user.email, photo: user.photo, subscription_tier: user.subscription_tier || 'Free' },
+            user: { id: user.id, name: user.name, email: user.email, photo: user.photo, subscription_tier: user.subscription_tier || 'Free', isAdmin: !!user.is_admin },
         });
     } catch (err) {
         console.error('Google sign-in error:', err);
@@ -375,24 +375,6 @@ router.post('/login', otpLimiter, async (req, res) => {
             const demo = demoRows[0];
             const token = jwt.sign({ id: demo.id }, JWT_SECRET, { expiresIn: '30d' });
             return res.json({ token, user: { id: demo.id, name: demo.name, email: demo.email, subscription_tier: demo.subscription_tier || 'Premium' } });
-        }
-        // ────────────────────────────────────────────────────────────────────
-
-        // ── Admin account bypass ─────────────────────────────────────────────
-        if (DEV_BYPASS_ENABLED && email === 'admin_finly' && password === 'Finly_development@123') {
-            let { rows: adminRows } = await query('SELECT * FROM users WHERE email = $1', [email]);
-            if (adminRows.length === 0) {
-                const adminId = uuidv4();
-                const adminHash = bcrypt.hashSync('Finly_development@123', 10);
-                await query(
-                    'INSERT INTO users (id, name, email, password, email_verified, subscription_tier) VALUES ($1, $2, $3, $4, $5, $6)',
-                    [adminId, 'Admin Finly', email, adminHash, true, 'Premium']
-                );
-                adminRows = [{ id: adminId, name: 'Admin Finly', email }];
-            }
-            const admin = adminRows[0];
-            const token = jwt.sign({ id: admin.id, isAdmin: true }, JWT_SECRET, { expiresIn: '30d' });
-            return res.json({ token, user: { id: admin.id, name: admin.name, email: admin.email, isAdmin: true, subscription_tier: admin.subscription_tier || 'Premium' } });
         }
         // ────────────────────────────────────────────────────────────────────
 
@@ -468,7 +450,7 @@ router.post('/login', otpLimiter, async (req, res) => {
 
         res.json({
             token,
-            user: { id: user.id, name: user.name, email: user.email, subscription_tier: user.subscription_tier || 'Free' },
+            user: { id: user.id, name: user.name, email: user.email, subscription_tier: user.subscription_tier || 'Free', isAdmin: !!user.is_admin },
         });
     } catch (err) {
         console.error('Login error:', err);
@@ -532,7 +514,7 @@ router.post('/verify-login-otp', otpLimiter, async (req, res) => {
 
         res.json({
             token,
-            user: { id: user.id, name: user.name, email: user.email, subscription_tier: user.subscription_tier || 'Free' },
+            user: { id: user.id, name: user.name, email: user.email, subscription_tier: user.subscription_tier || 'Free', isAdmin: !!user.is_admin },
         });
     } catch (err) {
         console.error('Verify login OTP error:', err);
@@ -648,14 +630,12 @@ router.post('/reset-password', otpLimiter, async (req, res) => {
 // GET /api/auth/me
 router.get('/me', authenticateToken, async (req, res) => {
     try {
-        const { rows } = await query('SELECT id, name, email, phone, photo, subscription_tier, subscription_expires_at, created_at FROM users WHERE id = $1', [req.userId]);
+        const { rows } = await query('SELECT id, name, email, phone, photo, subscription_tier, subscription_expires_at, is_admin, created_at FROM users WHERE id = $1', [req.userId]);
         if (rows.length === 0) {
             return res.status(404).json({ error: 'User not found' });
         }
         let user = await downgradeIfSubscriptionExpired(rows[0]);
-        if (user.email === 'admin_finly') {
-            user.isAdmin = true;
-        }
+        user.isAdmin = !!user.is_admin;
         res.json(user);
     } catch (err) {
         res.status(500).json({ error: 'Internal server error' });

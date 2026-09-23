@@ -10,8 +10,8 @@ router.use(authenticateToken);
 // Middleware to verify if user is admin
 async function requireAdmin(req, res, next) {
     try {
-        const { rows } = await query('SELECT email FROM users WHERE id = $1', [req.userId]);
-        if (rows.length === 0 || rows[0].email !== 'admin_finly') {
+        const { rows } = await query('SELECT is_admin FROM users WHERE id = $1', [req.userId]);
+        if (rows.length === 0 || !rows[0].is_admin) {
             return res.status(403).json({ error: 'Forbidden: Admin access only' });
         }
         next();
@@ -66,7 +66,7 @@ router.get('/stats', async (req, res) => {
         });
 
         const { rows: userList } = await query(
-            "SELECT u.id, u.name, u.email, COALESCE(u.subscription_tier, 'Free') as subscription_tier, u.created_at, MAX(ld.last_seen) as last_seen FROM users u LEFT JOIN login_devices ld ON ld.user_id = u.id GROUP BY u.id, u.name, u.email, u.subscription_tier, u.created_at ORDER BY u.created_at DESC"
+            "SELECT u.id, u.name, u.email, COALESCE(u.subscription_tier, 'Free') as subscription_tier, u.is_admin, u.created_at, MAX(ld.last_seen) as last_seen FROM users u LEFT JOIN login_devices ld ON ld.user_id = u.id GROUP BY u.id, u.name, u.email, u.subscription_tier, u.is_admin, u.created_at ORDER BY u.created_at DESC"
         );
 
         res.json({ totalUsers, activeUsers, subscriptions, userList });
