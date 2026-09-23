@@ -8,9 +8,23 @@ import { getPlanAmount } from '../services/planPricing.js';
 
 const router = express.Router();
 
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
+// Single flag for the whole payments feature — flip to 'true' in .env once real
+// Razorpay keys are in place. While false, every route below (including the
+// webhook) short-circuits with 503 and the Razorpay client is never constructed.
+const PAYMENTS_ENABLED = process.env.PAYMENTS_ENABLED === 'true';
+
+const razorpay = PAYMENTS_ENABLED
+  ? new Razorpay({
+      key_id: process.env.RAZORPAY_KEY_ID,
+      key_secret: process.env.RAZORPAY_KEY_SECRET,
+    })
+  : null;
+
+router.use((req, res, next) => {
+  if (!PAYMENTS_ENABLED) {
+    return res.status(503).json({ error: 'Payments are temporarily disabled' });
+  }
+  next();
 });
 
 // Marks a payments row paid and grants the plan it was created for. Idempotent so it's
