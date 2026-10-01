@@ -5,9 +5,11 @@ import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { OAuth2Client } from 'google-auth-library';
 import rateLimit from 'express-rate-limit';
-import { query, downgradeIfSubscriptionExpired } from '../db/index.js';
+import { pool, query, downgradeIfSubscriptionExpired } from '../db/index.js';
 import { seedDefaultsForUser } from '../db/seed.js';
+import { shownTier } from '../services/tier.js';
 import { sendOTP, sendWelcomeEmail, sendLoginAlert } from '../services/email.js';
+import { deleteImage } from '../services/cloudinary.js';
 
 const router = express.Router();
 
@@ -120,7 +122,7 @@ router.post('/signup', authLimiter, async (req, res) => {
             return res.status(201).json({
                 token,
                 otpDisabled: true,
-                user: { id: userId, name, email, phone: phone || null, subscription_tier: 'Free' },
+                user: { id: userId, name, email, phone: phone || null, subscription_tier: shownTier('Free') },
             });
         }
 
@@ -206,7 +208,7 @@ router.post('/verify-otp', otpLimiter, async (req, res) => {
 
         res.status(201).json({
             token,
-            user: { id: userId, name: otp.name, email, phone: otp.phone || null, subscription_tier: 'Free' },
+            user: { id: userId, name: otp.name, email, phone: otp.phone || null, subscription_tier: shownTier('Free') },
         });
     } catch (err) {
         console.error('Verify OTP error:', err);
@@ -335,7 +337,7 @@ router.post('/google', authLimiter, async (req, res) => {
 
         res.json({
             token,
-            user: { id: user.id, name: user.name, email: user.email, photo: user.photo, subscription_tier: user.subscription_tier || 'Free', isAdmin: !!user.is_admin },
+            user: { id: user.id, name: user.name, email: user.email, photo: user.photo, subscription_tier: shownTier(user.subscription_tier), isAdmin: !!user.is_admin },
         });
     } catch (err) {
         console.error('Google sign-in error:', err);
@@ -450,7 +452,7 @@ router.post('/login', otpLimiter, async (req, res) => {
 
         res.json({
             token,
-            user: { id: user.id, name: user.name, email: user.email, subscription_tier: user.subscription_tier || 'Free', isAdmin: !!user.is_admin },
+            user: { id: user.id, name: user.name, email: user.email, subscription_tier: shownTier(user.subscription_tier), isAdmin: !!user.is_admin },
         });
     } catch (err) {
         console.error('Login error:', err);
@@ -514,7 +516,7 @@ router.post('/verify-login-otp', otpLimiter, async (req, res) => {
 
         res.json({
             token,
-            user: { id: user.id, name: user.name, email: user.email, subscription_tier: user.subscription_tier || 'Free', isAdmin: !!user.is_admin },
+            user: { id: user.id, name: user.name, email: user.email, subscription_tier: shownTier(user.subscription_tier), isAdmin: !!user.is_admin },
         });
     } catch (err) {
         console.error('Verify login OTP error:', err);
@@ -636,6 +638,7 @@ router.get('/me', authenticateToken, async (req, res) => {
         }
         let user = await downgradeIfSubscriptionExpired(rows[0]);
         user.isAdmin = !!user.is_admin;
+        user.subscription_tier = shownTier(user.subscription_tier);
         res.json(user);
     } catch (err) {
         res.status(500).json({ error: 'Internal server error' });
@@ -720,6 +723,24 @@ router.put('/profile', authenticateToken, async (req, res) => {
     }
 });
 
+// Every table keyed by user_id. Most also cascade from users(id), but syncSchema() drops the
+// FK on budgets (and databases created before the CASCADE clauses existed may lack others),
+// so account deletion removes these rows explicitly instead of relying on the cascade.
+const USER_DATA_TABLES = [
+    'transactions', 'budgets', 'savings_goals', 'ai_chat_messages', 'settings',
+    'login_devices', 'coupon_redemptions', 'page_analytics', 'payments',
+    'categories', 'accounts',
+];
+
+async function revokeGoogleToken(token) {
+    if (!token) return;
+    try {
+        await new OAuth2Client().revokeToken(token);
+    } catch (err) {
+        console.error('Google token revoke error:', err.message);
+    }
+}
+
 // DELETE /api/auth/account — Delete user account and all data
 router.delete('/account', authenticateToken, async (req, res) => {
     try {
@@ -729,9 +750,9 @@ router.delete('/account', authenticateToken, async (req, res) => {
         if (rows.length === 0) {
             return res.status(404).json({ error: 'User not found' });
         }
+        const user = rows[0];
 
         if (password) {
-            const user = rows[0];
             if (user.password) {
                 const validPassword = bcrypt.compareSync(password, user.password);
                 if (!validPassword) {
@@ -740,8 +761,37 @@ router.delete('/account', authenticateToken, async (req, res) => {
             }
         }
 
-        // Delete user — cascading deletes will remove all related data
-        await query('DELETE FROM users WHERE id = $1', [req.userId]);
+        // Transaction images live in Cloudinary, not Postgres, so deleting the rows alone would
+        // orphan them. Read the URLs now — they're unreachable once the transactions are gone.
+        const { rows: photoRows } = await query(
+            "SELECT DISTINCT photo FROM transactions WHERE user_id = $1 AND photo LIKE 'http%cloudinary%'",
+            [req.userId]
+        );
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            for (const table of USER_DATA_TABLES) {
+                await client.query(`DELETE FROM ${table} WHERE user_id = $1`, [req.userId]);
+            }
+            // Pending sign-up/login/reset codes are keyed by email, not user id.
+            await client.query('DELETE FROM otp_codes WHERE email = $1', [user.email]);
+            await client.query('DELETE FROM users WHERE id = $1', [req.userId]);
+            await client.query('COMMIT');
+        } catch (dbErr) {
+            await client.query('ROLLBACK');
+            throw dbErr;
+        } finally {
+            client.release();
+        }
+
+        // Best-effort cleanup of data held outside our database. The account is already gone at
+        // this point, so a failure is logged rather than reported as a failed deletion (which
+        // the user would retry against an account that no longer exists).
+        await Promise.allSettled([
+            ...photoRows.map((r) => deleteImage(r.photo)),
+            revokeGoogleToken(user.google_drive_refresh_token),
+        ]);
 
         res.json({ message: 'Account deleted successfully' });
     } catch (err) {
@@ -752,6 +802,8 @@ router.delete('/account', authenticateToken, async (req, res) => {
 
 // POST /api/auth/upgrade-subscription — Upgrade user's subscription tier
 router.post('/upgrade-subscription', authenticateToken, async (req, res) => {
+    // Tiers come only from verified payments, coupons or admins, never self-service.
+    return res.status(403).json({ error: 'Plan changes are handled through checkout' });
     try {
         const { tier } = req.body;
         if (!['Pro', 'Premium'].includes(tier)) {

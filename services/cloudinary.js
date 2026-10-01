@@ -45,9 +45,12 @@ export async function deleteImage(url) {
     if (!url || !url.includes('cloudinary')) return;
 
     try {
-        const parts = url.split('/');
-        const folderAndFile = parts.slice(parts.indexOf('finly')).join('/');
-        const publicId = folderAndFile.replace(/\.[^/.]+$/, '');
+        // The public ID is whatever follows "/upload/", minus the optional version
+        // segment (v123/) and file extension. Anchoring on "/upload/" rather than the
+        // first "finly" segment keeps this correct if the cloud name is itself "finly".
+        const afterUpload = url.split('/upload/')[1];
+        if (!afterUpload) return;
+        const publicId = afterUpload.replace(/^v\d+\//, '').replace(/\.[^/.]+$/, '');
         await cloudinary.uploader.destroy(publicId);
     } catch (err) {
         console.error('Cloudinary delete error:', err.message);
