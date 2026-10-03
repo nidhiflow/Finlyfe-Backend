@@ -1,4 +1,5 @@
 import express from 'express';
+import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db/index.js';
 import { authenticateToken } from '../middleware/auth.js';
 
@@ -77,17 +78,29 @@ router.get('/', async (req, res) => {
 
 // Create account
 router.post('/', async (req, res) => {
-  const { name, type, balance, icon, color } = req.body;
-  const id = Date.now().toString();
+  const { name, type, icon, color } = req.body;
+  const cleanName = typeof name === 'string' ? name.trim() : '';
+  if (!cleanName) return res.status(400).json({ error: 'Account name is required' });
+  if (!type) return res.status(400).json({ error: 'Account type is required' });
+  const balance = Number(req.body.balance ?? 0);
+  if (!Number.isFinite(balance)) return res.status(400).json({ error: 'Opening balance must be a number' });
+  // UUID rather than Date.now(): ids are a global primary key, so two creates in the
+  // same millisecond (double tap, two users) would collide.
+  const id = uuidv4();
   try {
     const result = await query(
       `INSERT INTO accounts (id, user_id, name, type, balance, icon, color)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [id, req.userId, name, type, balance, icon, color]
+      [id, req.userId, cleanName, type, balance, icon, color]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[accounts] create failed for user', req.userId, '-', err.code, err.message);
+    // 23503 = foreign key violation: the token is valid but its user row no longer exists.
+    if (err.code === '23503') {
+      return res.status(401).json({ error: 'Your session is no longer valid. Please log out and log in again.' });
+    }
+    res.status(500).json({ error: 'Could not save the account. Please try again.' });
   }
 });
 
