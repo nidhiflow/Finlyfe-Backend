@@ -27,7 +27,10 @@ function aiUnavailable() {
     return 'The AI assistant is temporarily unavailable. Please try again later.';
 }
 
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
+// Render env values are easy to paste with a trailing space/newline or wrapping quotes,
+// which Groq rejects as a 401, so normalise before use.
+const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim().replace(/^["']|["']$/g, '').trim();
+console.log(`[ai] GROQ_API_KEY ${GROQ_API_KEY ? `loaded (${GROQ_API_KEY.length} chars, starts "${GROQ_API_KEY.slice(0, 4)}")` : 'NOT set'}`);
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
