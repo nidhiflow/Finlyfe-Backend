@@ -20,6 +20,13 @@ const aiLimiter = rateLimit({
     message: { error: 'Too many AI requests. Please slow down and try again shortly.' },
 });
 
+// A 401 from Groq means our own GROQ_API_KEY is bad. Users can't act on that, so log the
+// detail for the operator and show a neutral message instead of exposing the config.
+function aiUnavailable() {
+    console.error('[ai] Groq returned 401 - GROQ_API_KEY is invalid or revoked; update it in the Render environment.');
+    return 'The AI assistant is temporarily unavailable. Please try again later.';
+}
+
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
@@ -168,7 +175,7 @@ Please write 2–3 key insights and 1–2 simple recommended next actions.`;
                 const errData = JSON.parse(errText);
                 if (errData?.error?.message) errorMsg = errData.error.message;
             } catch { }
-            if (groqResponse.status === 401) errorMsg = 'Invalid Groq API key. Check GROQ_API_KEY in Render environment.';
+            if (groqResponse.status === 401) errorMsg = aiUnavailable();
             if (groqResponse.status === 429) errorMsg = 'AI rate limit reached. Please try again later.';
             return res.status(502).json({ error: errorMsg });
         }
@@ -297,7 +304,7 @@ Rules:
                 const errData = JSON.parse(errText);
                 if (errData?.error?.message) errorMsg = errData.error.message;
             } catch { }
-            if (groqResponse.status === 401) errorMsg = 'Invalid Groq API key. Check GROQ_API_KEY in Render environment.';
+            if (groqResponse.status === 401) errorMsg = aiUnavailable();
             if (groqResponse.status === 429) errorMsg = 'AI rate limit reached. Please try again later.';
             return res.status(502).json({ error: errorMsg });
         }
@@ -409,7 +416,7 @@ Be practical: suggest slightly above average spending to allow flexibility. Roun
                     const errData = JSON.parse(errText);
                     if (errData?.error?.message) lastError = errData.error.message;
                 } catch { }
-                if (groqResponse.status === 401) lastError = 'Invalid Groq API key. Check GROQ_API_KEY in Render environment.';
+                if (groqResponse.status === 401) lastError = aiUnavailable();
                 if (groqResponse.status === 429) {
                     lastError = 'AI rate limit reached. Please try again later.';
                     if (attempt < MAX_ATTEMPTS - 1) {
@@ -907,7 +914,7 @@ If the user did NOT ask to add a transaction, do not include any \`\`\`json bloc
                 if (errData?.error?.message) errorMsg = errData.error.message;
             } catch { }
             if (groqResponse.status === 401) {
-                errorMsg = 'Invalid Groq API key. Check GROQ_API_KEY in Render environment.';
+                errorMsg = aiUnavailable();
             } else if (groqResponse.status === 429) {
                 errorMsg = 'AI rate limit reached. Please try again later.';
             }
