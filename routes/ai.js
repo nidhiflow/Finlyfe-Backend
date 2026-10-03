@@ -30,6 +30,10 @@ function aiUnavailable() {
 // Render env values are easy to paste with a trailing space/newline or wrapping quotes,
 // which Groq rejects as a 401, so normalise before use.
 const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim().replace(/^["']|["']$/g, '').trim();
+// Groq retires models periodically; override with GROQ_MODEL in Render without a redeploy of code.
+const GROQ_TEXT_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
+// gpt-oss models spend max_tokens on hidden reasoning first; keep that small so replies aren't cut off.
+const GROQ_REASONING = GROQ_TEXT_MODEL.includes('gpt-oss') ? { reasoning_effort: 'low' } : {};
 console.log(`[ai] GROQ_API_KEY ${GROQ_API_KEY ? `loaded (${GROQ_API_KEY.length} chars, starts "${GROQ_API_KEY.slice(0, 4)}")` : 'NOT set'}`);
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
@@ -152,7 +156,8 @@ ${JSON.stringify(summary)}
 Please write 2–3 key insights and 1–2 simple recommended next actions.`;
 
         const groqBody = {
-            model: 'llama-3.1-8b-instant',
+            model: GROQ_TEXT_MODEL,
+            ...GROQ_REASONING,
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt }
@@ -281,7 +286,8 @@ Rules:
         const userPrompt = `Here is the user's money data for ${start} to ${end}:\n\n${JSON.stringify(summary)}\n\nWrite the report summary in the required format.`;
 
         const groqBody = {
-            model: 'llama-3.1-8b-instant',
+            model: GROQ_TEXT_MODEL,
+            ...GROQ_REASONING,
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt }
@@ -388,7 +394,8 @@ Be practical: suggest slightly above average spending to allow flexibility. Roun
         const userPrompt = `Spending by category (last ~3 months):\n${JSON.stringify(spending)}\n\nSuggest monthly budget amounts. Return JSON array with categoryId, categoryName, suggestedAmount, reason.`;
 
         const groqBody = {
-            model: 'llama-3.1-8b-instant',
+            model: GROQ_TEXT_MODEL,
+            ...GROQ_REASONING,
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt },
@@ -881,7 +888,8 @@ If the user did NOT ask to add a transaction, do not include any \`\`\`json bloc
         ];
 
         const groqBody = {
-            model: 'llama-3.1-8b-instant',
+            model: GROQ_TEXT_MODEL,
+            ...GROQ_REASONING,
             messages: groqMessages,
             temperature: 0.7,
             max_tokens: 1000
